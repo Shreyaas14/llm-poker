@@ -1,5 +1,6 @@
 "use client";
 
+import { marketPriceDisplay } from "../../lib/market-display";
 import { useEffect, useId, useRef, useState } from "react";
 import type { SessionView, ShowdownOdds } from "../../app/types";
 import type { MarketBookView, MarketDriver } from "../../lib/market";
@@ -50,7 +51,7 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
 
   if (!session) return null;
   const right = Math.max(LEFT, chartWidth - 48);
-  const history = session.market.history;
+  const { current: marks, history } = marketPriceDisplay(session.market, session.players.map(player => !player.folded));
   const odds = getShowdownOdds(session);
   const firstTick = history[0]?.tick ?? 0;
   const lastTick = history.at(-1)?.tick ?? firstTick;
@@ -104,19 +105,18 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
       <text className="chart-axis-label" x={(LEFT + right) / 2} y={HEIGHT - 5} textAnchor="middle">Market time</text>
     </svg>
     {inspected ? <div className="chart-price-tooltip" id={tooltipId} role="tooltip" style={{ left: Math.max(0, Math.min(chartWidth - 190, x(inspected.tick) + 12)) }}>
-      <strong>Market prices · {inspected.tick}s</strong>
+      <strong>Market prices · {inspected.tick}s{inspected.tick < session.market.tick ? " · Historical" : ""}</strong>
       {session.players.map(player => <div key={player.seat}><span><i aria-hidden="true" style={{ background: LINE_COLORS[player.seat % LINE_COLORS.length] }} />{player.name}</span><b>{percent(inspected.prices[player.seat])}</b></div>)}
     </div> : null}
     </div>
     <div className="analytics-comparison" role="table" aria-label="Current market prices compared with mathematical showdown equity">
       <div className="analytics-table-row analytics-table-head" role="row"><span role="columnheader">Model</span><span role="columnheader">{session.market.status === "settled" ? "Payout" : "Market"}</span><span role="columnheader">Showdown equity</span></div>
       {session.players.map(player => {
-        const book = session.market.books.find(b => b.outcome === player.seat);
-        const market = session.market.status === "settled" ? session.market.payouts?.[player.seat] : book?.midpoint ?? book?.lastPrice;
+        const market = marks[player.seat];
         return <div className="analytics-table-row" role="row" key={player.seat}><span className="analytics-model" role="cell"><i aria-hidden="true" style={{ backgroundColor: LINE_COLORS[player.seat % LINE_COLORS.length] }} />{player.name}</span><strong role="cell">{percent(market)}</strong><strong role="cell">{percent(odds?.equities[player.seat])}</strong></div>;
       })}
     </div>
-    <details className="analytics-method"><summary>Equity assumes no further folds</summary><p>Market prices use the bid–ask midpoint, or the last trade when a side is empty. {equityDescription(odds)}</p></details>
+    <details className="analytics-method"><summary>Equity assumes no further folds</summary><p>Market marks use the bid–ask midpoint, or the last trade when a side is empty. Folded outcomes mark at zero; actual last executions remain unchanged. Earlier chart points show their historical marks. {equityDescription(odds)}</p></details>
   </section>;
 }
 

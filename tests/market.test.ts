@@ -245,3 +245,14 @@ test("trader visibility is a detached public projection with no private trading 
   if (view.recentTrades[0]) view.recentTrades[0].buyer.name = "Changed";
   assert.equal(JSON.stringify(state), original);
 });
+
+
+test("a public fold records zero chart value immediately while preserving its last execution price",()=>{
+  let state=createMarket([1,1,1,1],19,1000,'jev');
+  state.lastPriceTicks[3]=28;
+  state=advanceMarket(state,[1,1,1,0],0);
+  assert.equal(state.tick,0);
+  assert.equal(state.history.at(-1)!.prices[3],0);
+  assert.equal(getMarketView(state).books[3].lastPrice,.28,'the actual last fill is not rewritten as a zero-price trade');
+  assert.equal(state.fills.length,0);
+});

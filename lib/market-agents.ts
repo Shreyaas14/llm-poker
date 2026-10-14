@@ -14,7 +14,7 @@ export type MarketRound = { state: string; traders: TraderMenu[] };
 export type MarketAnswers = Record<string, string>;
 
 const STRATEGIES = {
-  maker: "Supply two-sided liquidity, earn spreads, and keep balanced inventory.",
+  maker: "Supply two-sided liquidity, earn spreads, and keep balanced inventory. Reassess newly revealed cards: tight/wide quotes blend displayed equity with market marks, while market_quotes retains the book reference. Prefer responsive quotes when public information changes, unless inventory risk calls for hold.",
   fundamental: "Infer expected main-pot payouts from the spectator-visible cards, betting, and market data; seek positive value.",
   equity: "Use displayed showdown equity, allowing for future folds, and diversify inventory across viable outcomes.",
   momentum: "Favor recent price trends, while avoiding excessive inventory risk.",
@@ -36,12 +36,18 @@ export function prepareMarketRound(game: Game): MarketRound {
       return book?.midpoint ?? book?.lastPrice ?? openingPrice;
     });
     if (trader.kind === "maker") {
-      for (const [name, spread] of [["tight_quotes", 2], ["wide_quotes", 5]] as const) {
-        choices[name] = eligible.flatMap(player => [0, 1, 2].flatMap(level => [
-          order(player.seat, "buy", 8 + level * 8, Math.floor(anchors[player.seat] * 100 + 1e-8) - spread - level * 3),
-          order(player.seat, "sell", 8 + level * 8, Math.ceil(anchors[player.seat] * 100 - 1e-8) + spread + level * 3),
-        ]));
-      }
+      // Old choices only recycled book marks, so even successful Jev responses
+      // could not reprice a deep book after new cards. Both inputs are public.
+      const total = eligible.reduce((sum, player) => sum + anchors[player.seat], 0);
+      const responsive = anchors.map((mark, seat) => visible.players[seat].folded ? 0
+        : .75 * visible.odds.equities[seat] + .25 * (total > 0 ? mark / total : openingPrice));
+      const quotes = (reference: number[], spread: number) => eligible.flatMap(player => [0, 1, 2].flatMap(level => [
+        order(player.seat, "buy", 8 + level * 8, Math.floor(reference[player.seat] * 100 + 1e-8) - spread - level * 3),
+        order(player.seat, "sell", 8 + level * 8, Math.ceil(reference[player.seat] * 100 - 1e-8) + spread + level * 3),
+      ]));
+      choices.tight_quotes = quotes(responsive, 2);
+      choices.wide_quotes = quotes(responsive, 5);
+      choices.market_quotes = quotes(anchors, 2);
     } else {
       eligible.forEach(player => {
         const outcome = player.seat;

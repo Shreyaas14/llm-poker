@@ -45,7 +45,7 @@ test("round context matches spectator cards, equity, depth, and trader holdings 
   assert.ok(state.traders.every((t:Record<string,unknown>)=>!("cash" in t)&&!("cashUnits" in t)&&!("bias" in t)&&!("beliefs" in t)));
   assert.equal(state.deck,undefined);assert.equal(state.rngState,undefined);
   assert.ok(!round.state.includes('rngState'));assert.ok(!round.state.includes('seed'));
-  assert.equal(Object.keys(round.traders[0].choices).length,3);
+  assert.equal(Object.keys(round.traders[0].choices).length,4);
 });
 
 test("reservations throttle duplicate calls, survive retries, and enforce the game budget", () => {
@@ -60,7 +60,7 @@ test("reservations throttle duplicate calls, survive retries, and enforce the ga
 });
 
 test("late Jev decisions preserve concurrent human orders and recheck latest available balances", () => {
-  let game=reserveMarketRound(fixture(),'token',NOW)!;const round=prepareMarketRound(game);
+  const game=reserveMarketRound(fixture(),'token',NOW)!;const round=prepareMarketRound(game);
   game.market=placeHumanOrder(game.market,{outcome:0,side:'buy',quantity:1,limitPrice:.01,orderType:'limit'}).state;
   const humanId=game.market.orders[0].id;
   const answers=Object.fromEntries(round.traders.map(t=>[t.id,t.id==='trader-0'?'tight_quotes':'hold']));
@@ -201,7 +201,7 @@ test("opening prices are neutral and displayed market quotes determine later ord
   const quoted=prepareMarketRound(game);
   assert.equal(quoted.traders[2].choices.buy_0_5[0].priceTicks,47);
   assert.equal(quoted.traders[2].choices.sell_0_5[0].priceTicks,41);
-  const maker=quoted.traders[0].choices.tight_quotes.filter(o=>o.outcome===0);
+  const maker=quoted.traders[0].choices.market_quotes.filter(o=>o.outcome===0);
   assert.equal(maker[0].priceTicks,42);assert.equal(maker[1].priceTicks,46);
   game.poker.players[0].folded=true;
   const folded=prepareMarketRound(game);
@@ -222,4 +222,24 @@ test("the actual Gateway payload contains spectator information and no internal 
     assert.deepEqual(state.showdownEquity,viewGame(game,false,NOW).odds);
     for(const key of ['estimatedPayouts','rngState','beliefs','cashUnits','costBasisUnits','seed','deck']) assert.ok(!JSON.stringify(payload).includes(`"${key}"`),key);
   } finally {globalThis.fetch=oldFetch;}
+});
+
+test("Live maker quotes react to revealed cards rather than recycling neutral book prices", async t => {
+  const {createHand}=await import('../lib/poker.ts');
+  let game=fixture();game.poker=createHand(42,0,1000);game.market=createMarket([1,1,1,1],44,1000,'jev');
+  function quote(source:typeof game,token:string,time:number) {
+    const held=reserveMarketRound(source,token,time)!;
+    const round=prepareMarketRound(held);
+    return finishMarketRound(held,token,round,Object.fromEntries(round.traders.map(t=>[t.id,t.instructions===round.traders[0].instructions?'tight_quotes':'hold'])),time+1)!;
+  }
+  game=quote(game,'opening',NOW);
+  const opening=viewGame(game,false,NOW+1);
+  while(game.poker.street==='preflop') game=await commandGame(game,{type:'advance',pokerRevision:game.poker.revision},NOW+100,
+    async o=>({type:o.legal.canCheck?'check':'call'}));
+  game=quote(game,'flop',NOW+4000);
+  const flop=viewGame(game,false,NOW+4001);
+  assert.notDeepEqual(flop.odds.equities,opening.odds.equities);
+  assert.notDeepEqual(flop.market.books.map(b=>[b.bestBid,b.bestAsk]),opening.market.books.map(b=>[b.bestBid,b.bestAsk]),'successful maker decisions must be able to reprice after new visible cards');
+  t.diagnostic(JSON.stringify({openingQuotes:opening.market.books.map(b=>[b.bestBid,b.bestAsk]),flopQuotes:flop.market.books.map(b=>[b.bestBid,b.bestAsk])}));
+  assertFunded(game.market);
 });
