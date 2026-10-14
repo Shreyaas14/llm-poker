@@ -136,9 +136,12 @@ svg { flex-shrink: 0; }
 .mode-choice.active { border-bottom: 2px solid var(--ink); }
 .mode-choice strong { font-size: 13px; font-weight: 500; }
 .mode-choice small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 5px; }
-.ranked-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; margin: 0 0 18px; }
-.ranked-choice input { width: 16px; height: 16px; accent-color: var(--ink); }
-.ranked-choice span { color: var(--muted); margin-left: 24px; }
+.setup-options { display: grid; gap: 20px; margin-bottom: 24px; }
+.ranked-choice { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 8px; font-size: 11px; line-height: 18px; }
+.ranked-choice input { width: 16px; height: 16px; margin-top: 1px; accent-color: var(--ink); }
+.ranked-choice .attempts-remaining { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.intro-ticket .setup-option-description { margin: 8px 0 0 24px; }
+.intro-ticket .login-hint { margin-top: 10px; }
 .login-hint { text-align: left; }
 .login-hint a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .live-unavailable { color: var(--red); font-size: 12px; line-height: 1.6; padding: 0 0 15px; }
@@ -253,6 +256,11 @@ svg { flex-shrink: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+@media (max-width: 360px) {
+  .ranked-choice { grid-template-columns: 16px minmax(0, 1fr); }
+  .ranked-choice .attempts-remaining { grid-column: 2; margin-top: -4px; }
 }
 
 /* Casino marquee brand artwork. */
