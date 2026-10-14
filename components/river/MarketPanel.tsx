@@ -4,6 +4,7 @@ import { Check, X } from "lucide-react";
 import { ModelMark } from "./PokerTable";
 import type { Bootstrap, GameMode, SessionCommand, SessionView } from "../../app/types";
 import { equityDescription, OrderBook, percent } from "./MarketAnalytics";
+import { orderPreview } from "../../lib/order-preview";
 import { sharesAtQuote } from "../../lib/market-display";
 
 export function dollars(value: number) { return value.toLocaleString("en-US", { style: "currency", currency: "USD" }); }
@@ -41,14 +42,16 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
   const ownQuotedShares = session?.market.openOrders.filter(order => order.outcome === selected && order.side !== side && withinLimit(order.limitPrice)).reduce((sum, order) => sum + order.remainingQuantity, 0) ?? 0;
   const availableAtQuote = Math.max(0, (quotedDepth?.filter(level => withinLimit(level.price)).reduce((sum, level) => sum + level.quantity, 0) ?? 0) - ownQuotedShares);
   const actualPrice = orderType === "limit" ? Number(limit) / 100 : quickPrice;
-  const total = Number(quantity) * (actualPrice ?? 0);
+  const preview = orderPreview(quantity, actualPrice);
+  const inputError = preview.quantityError ?? (orderType === "limit" ? preview.priceError : null);
+  const invalidDraft = preview.quantity == null || preview.price == null;
   const ended = Boolean(session && session.status !== "playing");
   const lastTrade = session?.activity.filter(a => a.kind === "trade" && a.hand === session.hand).at(-1);
   const paused = Boolean(session && (!playing || session.paused));
   const unavailable = paused || !session?.tradingOpen || ended;
   const outcomeClosed = Boolean(selectedPlayer?.folded);
   const noQuote = outcomeClosed || orderType === "ioc" && actualPrice == null;
-  const insufficient = side === "buy" ? total > (session?.market.availableCash ?? 0) : Number(quantity) > (position?.availableQuantity ?? 0);
+  const insufficient = !invalidDraft && (side === "buy" ? preview.total! > (session?.market.availableCash ?? 0) : preview.quantity! > (position?.availableQuantity ?? 0));
 
   function selectOutcome(outcome: number, tradeSide?: "buy" | "sell") {
     setSelected(outcome);
@@ -71,14 +74,11 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
   async function submitOrder() {
     setTicketError(null);
     if (readOnly || !onCommand || unavailable || outcomeClosed || busy || draftStale) return;
-    if (!session || actualPrice == null || !Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
-      setTicketError("Enter a positive whole number of shares."); return;
-    }
-    if (!Number.isFinite(actualPrice) || actualPrice < .01 || actualPrice > .99 || Math.abs(actualPrice * 100 - Math.round(actualPrice * 100)) > 1e-7) {
-      setTicketError("Choose a limit from 1¢ to 99¢ in whole cents."); return;
+    if (!session || preview.quantity == null || preview.price == null) {
+      setTicketError(inputError ?? "No quote available."); return;
     }
     if (insufficient) { setTicketError(side === "buy" ? "Not enough available cash for this order." : "You can only sell shares you own and haven’t reserved."); return; }
-    await onCommand({ type: "order", hand: session.hand, pokerRevision: session.pokerRevision, outcome: selected, side, quantity: Number(quantity), limitPrice: actualPrice, orderType });
+    await onCommand({ type: "order", hand: session.hand, pokerRevision: session.pokerRevision, outcome: selected, side, quantity: preview.quantity, limitPrice: preview.price, orderType });
   }
 
   return <aside className="market-aside" id="prediction-market" aria-label="Prediction market">
@@ -120,17 +120,17 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
         <div className="ticket-top"><h3>{selectedPlayer?.name} shares</h3><div className="trade-tabs" aria-label="Trade side"><button className={`trade-tab ${side === "buy" ? "active" : ""}`} type="button" aria-pressed={side === "buy"} onClick={() => { setSide("buy"); setQuote(null); setTicketError(null); }}>Buy</button><button className={`trade-tab ${side === "sell" ? "active" : ""}`} type="button" aria-pressed={side === "sell"} onClick={() => { setSide("sell"); setQuote(null); setTicketError(null); }}>Sell</button></div></div>
         {outcomeClosed ? <p className="ticket-error" role="status">{selectedPlayer?.name} folded. These shares pay $0 and can no longer be traded.</p> : null}
         <div className="ticket-availability"><div><span>{side === "buy" ? "For sale" : "Buyers for"} within {price(quickPrice)}</span><strong>{availableAtQuote.toLocaleString("en-US")} shares</strong></div><div><span>You own</span><strong>{position?.quantity ?? 0} shares{position && position.availableQuantity < position.quantity ? <small>{position.availableQuantity} available to sell</small> : null}</strong></div></div>
-        <label className="field-label" htmlFor="order-type">Order type <span>{orderType === "ioc" ? "Unfilled shares cancel" : "Can carry across actions"}</span></label><select className="select-input" id="order-type" disabled={outcomeClosed} value={orderType} onChange={e => setOrderType(e.target.value as "ioc" | "limit")}><option value="ioc">Buy / sell at displayed quote</option><option value="limit">Limit order</option></select>
-        <label className="field-label" htmlFor="trade-quantity">Quantity <span>{side === "buy" ? `${dollars(session.market.availableCash)} available` : `${position?.availableQuantity ?? 0} shares available`}</span></label><div className="input-with-unit"><input className="text-input" id="trade-quantity" disabled={outcomeClosed} type="number" inputMode="numeric" min="1" max="100000" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} /><span>shares</span></div><div className="quick-amounts" aria-label="Share quantity presets">{[10, 25, 50, 100].map(q => <button type="button" key={q} disabled={outcomeClosed} onClick={() => setQuantity(String(q))}>{q}</button>)}</div>
-        {orderType === "limit" ? <><label className="field-label" htmlFor="limit-price">{side === "buy" ? "Maximum buy price" : "Minimum sell price"}</label><div className="input-with-unit"><input className="text-input" id="limit-price" disabled={outcomeClosed} type="number" inputMode="numeric" min="1" max="99" step="1" value={limit} onChange={e => setLimit(e.target.value)} /><span>cents</span></div></> : null}
-        <div className="trade-details"><div><span>{side === "buy" ? "Maximum buy price" : "Minimum sale price"}</span><strong>{price(actualPrice)}</strong></div><div><span title={equityDescription(session.odds)}>Showdown equity</span><strong>{percent(session.odds.equities[selected])}</strong></div><div><span>{side === "buy" ? "Maximum cost" : "Proceeds if fully filled"}</span><strong>{dollars(Number.isFinite(total) ? total : 0)}</strong></div>{side === "buy" ? <div><span>Payout if all {Number(quantity) || 0} win outright</span><strong>{dollars(Number(quantity) || 0)}</strong></div> : null}</div>
+        <label className="field-label" htmlFor="order-type">Order type <span>{orderType === "ioc" ? "Unfilled shares cancel" : "Can carry across actions"}</span></label><select className="select-input" id="order-type" disabled={outcomeClosed} value={orderType} onChange={e => { setOrderType(e.target.value as "ioc" | "limit"); setTicketError(null); }}><option value="ioc">Buy / sell at displayed quote</option><option value="limit">Limit order</option></select>
+        <label className="field-label" htmlFor="trade-quantity">Quantity <span>{side === "buy" ? `${dollars(session.market.availableCash)} available` : `${position?.availableQuantity ?? 0} shares available`}</span></label><div className="input-with-unit"><input className="text-input" id="trade-quantity" aria-invalid={Boolean(preview.quantityError)} aria-describedby={preview.quantityError ? "trade-validation" : undefined} disabled={outcomeClosed} type="number" inputMode="numeric" min="1" max="100000" step="1" value={quantity} onChange={e => { setQuantity(e.target.value); setTicketError(null); }} /><span>shares</span></div><div className="quick-amounts" aria-label="Share quantity presets">{[10, 25, 50, 100].map(q => <button type="button" key={q} disabled={outcomeClosed} onClick={() => { setQuantity(String(q)); setTicketError(null); }}>{q}</button>)}</div>
+        {orderType === "limit" ? <><label className="field-label" htmlFor="limit-price">{side === "buy" ? "Maximum buy price" : "Minimum sell price"}</label><div className="input-with-unit"><input className="text-input" id="limit-price" aria-invalid={Boolean(preview.priceError)} aria-describedby={preview.priceError ? "trade-validation" : undefined} disabled={outcomeClosed} type="number" inputMode="numeric" min="1" max="99" step="1" value={limit} onChange={e => { setLimit(e.target.value); setTicketError(null); }} /><span>cents</span></div></> : null}
+        <div className="trade-details"><div><span>{side === "buy" ? "Maximum buy price" : "Minimum sale price"}</span><strong>{price(preview.price)}</strong></div><div><span title={equityDescription(session.odds)}>Showdown equity</span><strong>{percent(session.odds.equities[selected])}</strong></div><div><span>{side === "buy" ? "Maximum cost" : "Proceeds if fully filled"}</span><strong>{preview.total == null ? "—" : dollars(preview.total)}</strong></div>{side === "buy" ? <div><span>Payout if all {preview.quantity ?? "shares"} win outright</span><strong>{preview.quantity == null ? "—" : dollars(preview.quantity)}</strong></div> : null}</div>
         {orderType === "ioc" || draftStale ? <p className={`ticket-fill-note ${draftStale ? "ticket-error" : ""}`}>
           {draftStale ? <>The hand changed. Review this market. <button type="button" className="text-button" onClick={() => holdQuote(true)} disabled={busy}>Use hand {session.hand}</button></> : <>
-            {availableAtQuote < Number(quantity) && actualPrice != null ? `Only ${availableAtQuote} of ${Number(quantity)} shares within this limit. ` : ""}Unfilled shares cancel. {quoteHeld ? <>Limit held. <button type="button" className="text-button" onClick={() => holdQuote(true)} disabled={busy}>Refresh price</button></> : "Limit locks while editing."}
+            {preview.quantity != null && availableAtQuote < preview.quantity && preview.price != null ? `Only ${availableAtQuote} of ${preview.quantity} shares within this limit. ` : ""}Unfilled shares cancel. {quoteHeld ? <>Limit held. <button type="button" className="text-button" onClick={() => holdQuote(true)} disabled={busy}>Refresh price</button></> : "Limit locks while editing."}
           </>}
         </p> : null}
-        {ticketError ? <p className="ticket-error" role="alert">{ticketError}</p> : null}
-        <button type="button" className="primary-button wide" disabled={busy || unavailable || draftStale || noQuote || insufficient || !Number(quantity)} onClick={() => void submitOrder()}>{ended ? "Hand settled" : outcomeClosed ? "Model folded" : paused ? "Press Play to trade" : unavailable ? "Trading window closed" : draftStale ? "Review the new hand" : noQuote ? "No quote available" : insufficient ? side === "buy" ? "Not enough cash" : "Not enough shares" : busy ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${orderType === "ioc" ? "up to " : ""}${Number(quantity) || 0} shares`}</button>
+        {ticketError || inputError ? <p className="ticket-error" id="trade-validation" role="alert">{ticketError ?? inputError}</p> : null}
+        <button type="button" className="primary-button wide" disabled={busy || unavailable || draftStale || noQuote || invalidDraft || insufficient} onClick={() => void submitOrder()}>{ended ? "Hand settled" : outcomeClosed ? "Model folded" : paused ? "Press Play to trade" : unavailable ? "Trading window closed" : draftStale ? "Review the new hand" : noQuote ? "No quote available" : invalidDraft ? "Check order details" : insufficient ? side === "buy" ? "Not enough cash" : "Not enough shares" : busy ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${orderType === "ioc" ? "up to " : ""}${preview.quantity ?? 0} shares`}</button>
         <details className="ticket-rules"><summary>Contract rules</summary><p>Shares pay $1 to the sole main-pot winner; ties split that dollar. Partial fills are possible. Showdown equity assumes no further folds.</p></details>
       </div>}
     </section>
