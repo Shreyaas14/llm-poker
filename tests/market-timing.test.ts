@@ -54,9 +54,9 @@ test("information reactions are bounded, seeded and preserve collateral and fund
   assert.deepEqual(reactMarket(published), reacted);
   assert.equal(reacted.tick, published.tick);
   assert.equal(reacted.traders.filter(trader => trader.seenRevision === reacted.revision).length, 4);
-  assert.equal(reacted.collateralUnits, opening.collateralUnits);
+  assert.equal(reacted.collateralUnits, reacted.completeSetsIssued * 120_000);
   const cash = (state: typeof reacted) => Object.values(state.accounts).reduce((sum, account) => sum + account.cashUnits, 0);
-  assert.equal(cash(reacted), cash(opening));
+  assert.equal(cash(reacted) + reacted.collateralUnits, cash(opening) + opening.collateralUnits);
   for (let seat = 0; seat < 4; seat++) {
     assert.equal(Object.values(reacted.accounts).reduce((sum, account) => sum + account.shares[seat], 0), reacted.completeSetsIssued);
   }

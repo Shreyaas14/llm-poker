@@ -154,7 +154,7 @@ test("finite agents preserve every credit and share across events, human trades,
     }
     assert.ok(state.volumes.reduce((a, b) => a + b, 0) > 0);
     const sets = state.completeSetsIssued;
-    assert.equal(sets, 4760, "liquidity was not replenished with free money or shares");
+    assert.equal(state.collateralUnits, sets * U, "every outstanding complete set remains fully collateralized");
     state = settleMarket(state, [0, 1, 0, 0]); assertLedger(state);
   }
 });
@@ -173,10 +173,10 @@ test("trader positions expose actual inventory and named executed fills, not quo
   let state = createMarket([0.4, 0.3, 0.2, 0.1], 42);
   state.orders = [];
   const before = getMarketView(state);
-  assert.equal(before.traderPositions.length, 16);
+  assert.equal(before.traderPositions.length, 17);
   for (const trader of before.traderPositions) {
     assert.deepEqual(trader.holdings, state.accounts[trader.id].shares);
-    assert.deepEqual(trader.netFilledShares, trader.holdings.map(quantity => quantity - trader.initialSharesPerOutcome));
+    assert.deepEqual(trader.netFilledShares, trader.holdings.map(quantity => quantity - trader.initialSharesPerOutcome - (state.accounts[trader.id].completeSetDelta ?? 0)));
   }
   state = placeHumanOrder(state, { outcome: 0, side: "buy", quantity: 10, limitPrice: 0.01, orderType: "limit" }).state;
   assert.equal(getMarketView(state).books[0].bestBid, 0.01, "a real new quote changes the book");

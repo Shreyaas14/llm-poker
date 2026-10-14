@@ -1,5 +1,6 @@
 "use client";
 
+import { marketProbabilities, probabilityUnits } from "../../lib/market-pricing";
 import { useEffect, useId, useRef, useState } from "react";
 import type { SessionView, ShowdownOdds } from "../../app/types";
 import type { MarketBookView, MarketDriver } from "../../lib/market";
@@ -25,7 +26,7 @@ export function equityDescription(odds: ShowdownOdds | undefined): string {
   return `${assumption} ${odds.method === "exact" ? "Exact card calculation or settled payout." : `${odds.samples.toLocaleString()} sampled boards; maximum standard error ${(odds.standardError * 100).toFixed(1)} percentage points (one standard deviation).`}`;
 }
 
-/** History is recorded from the book midpoint, or the last trade when a side is empty. */
+/** Normalize market marks for probability display; executable quotes remain separate. */
 export function MarketAnalytics({ session }: { session: SessionView | null }) {
   const containerRef = useRef<HTMLElement>(null);
   const tooltipId = useId();
@@ -50,7 +51,12 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
 
   if (!session) return null;
   const right = Math.max(LEFT, chartWidth - 48);
-  const history = session.market.history;
+  const history = session.market.history.map(point => ({
+    ...point, prices: probabilityUnits(point.probabilities ?? marketProbabilities(point.prices)).map(n => n / 1000),
+  }));
+  const current = session.market.probabilities ?? (session.market.status === "settled" ? session.market.payouts ?? []
+    : marketProbabilities(session.market.books.map(book => book.midpoint ?? book.lastPrice), session.players.map(player => !player.folded)));
+  const probabilities = probabilityUnits(current).map(n => n / 1000);
   const odds = getShowdownOdds(session);
   const firstTick = history[0]?.tick ?? 0;
   const lastTick = history.at(-1)?.tick ?? firstTick;
@@ -76,8 +82,8 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
     setHoveredTick(nearest?.tick ?? null);
   };
 
-  return <section ref={containerRef} className="market-analytics" aria-label="Market prices and mathematical showdown equity">
-    <div className="analytics-heading"><h2>Market prices</h2><span>Hand {session.hand}</span></div>
+  return <section ref={containerRef} className="market-analytics" aria-label="Market probabilities and mathematical showdown equity">
+    <div className="analytics-heading"><h2>Market Probabilities</h2><span>Hand {session.hand}</span></div>
     <div className="market-chart-wrap">
     <svg aria-describedby={inspected ? tooltipId : undefined} tabIndex={0} onPointerMove={event => inspectAt(event.clientX, event.currentTarget.getBoundingClientRect())} onPointerLeave={() => setHoveredTick(null)} onFocus={() => setHoveredTick(history.at(-1)?.tick ?? null)} onBlur={() => setHoveredTick(null)} onKeyDown={event => {
       if (event.key === "Escape") { setHoveredTick(null); return; }
@@ -86,9 +92,9 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
       const index = history.findIndex(point => point.tick === hoveredTick);
       const next = event.key === "Home" ? 0 : event.key === "End" ? history.length - 1 : Math.max(0, Math.min(history.length - 1, (index < 0 ? history.length - 1 : index) + (event.key === "ArrowLeft" ? -1 : 1)));
       setHoveredTick(history[next].tick);
-    }} className="market-price-chart" viewBox={`0 0 ${chartWidth} ${HEIGHT}`} height={HEIGHT} preserveAspectRatio="none" role="img" aria-label={`Market price history for hand ${session.hand}. Hover to see named prices at each time, or focus and use the arrow keys. Current prices and mathematical equity are listed below.`}>
-      <title>Outcome prices from the order book</title>
-      <desc>Four lines show actual market history. Gaps indicate there was no midpoint or previous trade. Prices can differ from mathematical showdown equity.</desc>
+    }} className="market-price-chart" viewBox={`0 0 ${chartWidth} ${HEIGHT}`} height={HEIGHT} preserveAspectRatio="none" role="img" aria-label={`Normalized market probability history for hand ${session.hand}. Hover to see named probabilities at each time, or focus and use the arrow keys. Current probabilities and mathematical equity are listed below.`}>
+      <title>Normalized market probabilities from the order book</title>
+      <desc>Four lines show market probabilities normalized to 100 percent at each recorded time. Missing quotes use neutral reference weights. These are not executable buy or sell prices and can differ from mathematical showdown equity.</desc>
       {[0, .25, .5, .75, 1].map(value => <g key={value}><line className="chart-grid-line" x1={LEFT} x2={right} y1={y(value)} y2={y(value)} /><text className="chart-axis-label" x={right + 8} y={y(value) + 3}>{value * 100}%</text></g>)}
       {session.players.map((player, i) => {
         const latest = history.at(-1);
@@ -104,19 +110,19 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
       <text className="chart-axis-label" x={(LEFT + right) / 2} y={HEIGHT - 5} textAnchor="middle">Market time</text>
     </svg>
     {inspected ? <div className="chart-price-tooltip" id={tooltipId} role="tooltip" style={{ left: Math.max(0, Math.min(chartWidth - 190, x(inspected.tick) + 12)) }}>
-      <strong>Market prices · {inspected.tick}s</strong>
+      <strong>Market probabilities · {inspected.tick}s</strong>
       {session.players.map(player => <div key={player.seat}><span><i aria-hidden="true" style={{ background: LINE_COLORS[player.seat % LINE_COLORS.length] }} />{player.name}</span><b>{percent(inspected.prices[player.seat])}</b></div>)}
     </div> : null}
     </div>
-    <div className="analytics-comparison" role="table" aria-label="Current market prices compared with mathematical showdown equity">
-      <div className="analytics-table-row analytics-table-head" role="row"><span role="columnheader">Model</span><span role="columnheader">{session.market.status === "settled" ? "Payout" : "Market"}</span><span role="columnheader">Showdown equity</span></div>
+    <div className="analytics-comparison" role="table" aria-label="Normalized market probabilities compared with mathematical showdown equity">
+      <div className="analytics-table-row analytics-table-head" role="row"><span role="columnheader">Model</span><span role="columnheader">{session.market.status === "settled" ? "Payout" : "Market Probability"}</span><span role="columnheader">Showdown equity</span></div>
       {session.players.map(player => {
-        const book = session.market.books.find(b => b.outcome === player.seat);
-        const market = session.market.status === "settled" ? session.market.payouts?.[player.seat] : book?.midpoint ?? book?.lastPrice;
+        const market = probabilities[player.seat];
         return <div className="analytics-table-row" role="row" key={player.seat}><span className="analytics-model" role="cell"><i aria-hidden="true" style={{ backgroundColor: LINE_COLORS[player.seat % LINE_COLORS.length] }} />{player.name}</span><strong role="cell">{percent(market)}</strong><strong role="cell">{percent(odds?.equities[player.seat])}</strong></div>;
       })}
     </div>
-    <details className="analytics-method"><summary>Equity assumes no further folds</summary><p>Market prices use the bid–ask midpoint, or the last trade when a side is empty. {equityDescription(odds)}</p></details>
+    <p className="market-probability-note">Total 100% · Normalized market probabilities, not trade prices.{session.market.probabilityIndicative ? " Indicative: missing quotes use neutral weights." : ""} Buy and Sell show executable quotes.</p>
+    <details className="analytics-method"><summary>Equity assumes no further folds</summary><p>Market probabilities normalize bid–ask midpoints, or last trades when a side is empty, across the outcomes. Missing marks use equal reference weights, and displayed rounding preserves a 100% total. Execution prices and spreads are shown separately in the order book. {equityDescription(odds)}</p></details>
   </section>;
 }
 
@@ -127,11 +133,11 @@ export function OrderBook({ book, name, settled, traderEngine, agentNotice, reco
   const spread = book?.bestAsk != null && book.bestBid != null ? Math.round((book.bestAsk - book.bestBid) * 100) : null;
   return <section className="clob-panel" aria-label={`Order book for ${name ?? "selected model"}`}>
     <div className="clob-heading"><h3>{recordedAt ? "Historical Order Book" : "Order book"} <span>{name}</span></h3><span>{recordedAt ? `Hand ${recordedAt.hand} · ${recordedAt.tick}s · ${settled ? "Settled" : "Recorded"}` : settled ? "Settled" : spread == null ? "No two-sided quote" : `${spread}¢ spread`}</span></div>
-    {traderEngine === "jev" && !recordedAt ? <p className="clob-agent-status" role="status">{settled ? "Jev trading complete. Orders settled." : agentNotice ?? "Orders chosen by Jev · Play money only."}</p> : null}
+    {traderEngine === "jev" && !recordedAt ? <p className="clob-agent-status" role="status">{settled ? "Jev trading complete. Orders settled." : agentNotice ?? "Jev strategy orders · Play money only."}</p> : null}
     <div className="clob-columns">{([{ label: "Bids", levels: bids, kind: "bid" }, { label: "Asks", levels: asks, kind: "ask" }] as const).map(side => <div className={`clob-side clob-${side.kind}`} key={side.kind}>
       <div className="clob-column-head"><strong>{side.label}</strong><span>Shares</span></div>
-      {side.levels.length ? side.levels.map(level => <div className="clob-level" key={level.price}><i className="clob-volume" aria-hidden="true" style={{ width: `${100 * level.quantity / maxQuantity}%` }} /><span>{recordedAt ? `${Math.round(level.price * 100)}¢` : percent(level.price)}</span><span>{level.quantity.toLocaleString()}</span></div>) : <p className="clob-empty">{recordedAt ? settled ? "Orders closed at settlement." : `No ${side.label.toLowerCase()} recorded at this step.` : settled ? "—" : `No ${side.label.toLowerCase()}`}</p>}
+      {side.levels.length ? side.levels.map(level => <div className="clob-level" key={level.price}><i className="clob-volume" aria-hidden="true" style={{ width: `${100 * level.quantity / maxQuantity}%` }} /><span>{`${Math.round(level.price * 100)}¢`}</span><span>{level.quantity.toLocaleString()}</span></div>) : <p className="clob-empty">{recordedAt ? settled ? "Orders closed at settlement." : `No ${side.label.toLowerCase()} recorded at this step.` : settled ? "—" : `No ${side.label.toLowerCase()}`}</p>}
     </div>)}</div>
-    <p className="clob-caption">{recordedAt ? settled ? "Orders closed at settlement. Step back to inspect earlier quotes." : "Top 6 recorded price levels per side · Prices per share · Read-only snapshot" : "1% = 1¢ per share · Bars show available shares"}</p>
+    <p className="clob-caption">{recordedAt ? settled ? "Orders closed at settlement. Step back to inspect earlier quotes." : "Top 6 recorded price levels per side · Prices per share · Read-only snapshot" : "Executable prices per share · Bars show available shares"}</p>
   </section>;
 }

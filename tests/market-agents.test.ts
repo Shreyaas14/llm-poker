@@ -27,7 +27,7 @@ test("bounded trader choices execute funded matches and cannot submit human or i
   m=replaceTraderOrders(m,"trader-1",[{outcome:0,side:"buy",quantity:25,priceTicks:25}]);
   assert.equal(m.fills.length,1);assert.equal(m.fills[0].quantity,25);assertFunded(m);
   assert.throws(()=>replaceTraderOrders(m,"human",[]),/Unknown trader/);
-  assert.throws(()=>replaceTraderOrders(m,"trader-0",[{outcome:0,side:"buy",quantity:26,priceTicks:25}]),/Invalid/);
+  assert.throws(()=>replaceTraderOrders(m,"trader-0",[{outcome:0,side:"buy",quantity:401,priceTicks:25}]),/Invalid/);
   m.accounts['trader-0'].cashUnits=0;
   const exhausted=replaceTraderOrders(m,"trader-0",[{outcome:0,side:"buy",quantity:25,priceTicks:99}]);
   assert.equal(exhausted.orders.filter(o=>o.owner==='trader-0').length,0);
@@ -60,7 +60,7 @@ test("reservations throttle duplicate calls, survive retries, and enforce the ga
 });
 
 test("late Jev decisions preserve concurrent human orders and recheck latest available balances", () => {
-  let game=reserveMarketRound(fixture(),'token',NOW)!;const round=prepareMarketRound(game);
+  const game=reserveMarketRound(fixture(),'token',NOW)!;const round=prepareMarketRound(game);
   game.market=placeHumanOrder(game.market,{outcome:0,side:'buy',quantity:1,limitPrice:.01,orderType:'limit'}).state;
   const humanId=game.market.orders[0].id;
   const answers=Object.fromEntries(round.traders.map(t=>[t.id,t.id==='trader-0'?'tight_quotes':'hold']));
@@ -202,7 +202,8 @@ test("opening prices are neutral and displayed market quotes determine later ord
   assert.equal(quoted.traders[2].choices.buy_0_5[0].priceTicks,47);
   assert.equal(quoted.traders[2].choices.sell_0_5[0].priceTicks,41);
   const maker=quoted.traders[0].choices.tight_quotes.filter(o=>o.outcome===0);
-  assert.equal(maker[0].priceTicks,42);assert.equal(maker[1].priceTicks,46);
+  assert.equal(maker[0].priceTicks,36);assert.equal(maker[1].priceTicks,38);
+  assert.equal(quoted.traders[0].choices.tight_quotes.length,48);
   game.poker.players[0].folded=true;
   const folded=prepareMarketRound(game);
   assert.ok(folded.traders.every(t=>Object.values(t.choices).flat().every(o=>o.outcome!==0)));
