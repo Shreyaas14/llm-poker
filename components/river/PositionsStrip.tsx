@@ -19,7 +19,7 @@ export function PositionsStrip({ session, readOnly = false }: { session: Session
         const reserved = Math.max(0, quantity - (position?.availableQuantity ?? 0));
         const withoutBids = position?.unliquidatedQuantity ?? 0;
         const pnl = position?.unrealizedPnl ?? 0;
-        const notes = [reserved > 0 ? `${reserved.toLocaleString()} reserved` : null, withoutBids > 0 ? `${withoutBids.toLocaleString()} without bids` : null].filter(Boolean).join(" · ");
+        const notes = player.folded ? "Folded · pays $0" : [reserved > 0 ? `${reserved.toLocaleString()} reserved` : null, withoutBids > 0 ? `${withoutBids.toLocaleString()} without bids` : null].filter(Boolean).join(" · ");
 
         return <div className={`positions-strip-item ${quantity === 0 ? "positions-strip-empty" : ""}`} key={player.seat}>
           <div className="positions-strip-item-heading">
