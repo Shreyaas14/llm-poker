@@ -302,3 +302,87 @@ test('Jev-only quote changes are saved as historical book frames without a human
     assert.equal(frames[1].session.tradingOpen,false);
   } finally {held.release();await ticking.catch(()=>{});held.restore();}
 });
+
+test('more than six unranked live starts are allowed without consuming ranked attempts',async()=>{
+  const owner={id:crypto.randomUUID(),authenticated:true};
+  await server.saveProfile(owner,{username:`unranked_${owner.id.slice(0,8)}`});
+  for(let i=0;i<8;i++) {
+    const game=await server.startSession(owner,{requestId:crypto.randomUUID(),mode:'live',ranked:false});
+    assert.equal(game.status,'playing');assert.equal(game.market.driver,'jev');
+    // Seed both kinds of historical run; neither should impose a daily quota.
+    storage.prepare('UPDATE sessions SET status=? WHERE id=?').run(i%2===0?'complete':'abandoned',game.id);
+  }
+  const count=storage.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id=? AND mode='live'").get(owner.id)!;
+  assert.equal(count.n,8);
+  assert.equal((await server.bootstrap(owner)).profile?.remainingAttempts,3);
+
+  const requestIds=[crypto.randomUUID(),crypto.randomUUID()];
+  const competing=await Promise.all(requestIds.map(requestId=>server.startSession(owner,{requestId,mode:'live',ranked:false})));
+  assert.equal(competing[0].id,competing[1].id,'concurrent starts still create only one active run');
+  const retry=await server.startSession(owner,{requestId:competing[0].id,mode:'live',ranked:false});
+  assert.equal(retry.id,competing[0].id);
+  assert.equal(storage.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id=? AND status='playing'").get(owner.id)!.n,1);
+  assert.equal(storage.prepare('SELECT COUNT(*) AS n FROM replay_frames WHERE session_id=?').get(retry.id)!.n,1);
+});
+
+test('ranked starts remain limited to three per week across modes while unranked stays available',async()=>{
+  const owner={id:crypto.randomUUID(),authenticated:true};
+  await server.saveProfile(owner,{username:`ranked_${owner.id.slice(0,8)}`});
+  for(const mode of ['live','practice','live'] as const) {
+    const game=await server.startSession(owner,{requestId:crypto.randomUUID(),mode,ranked:true});
+    await server.endSession(owner,game.id);
+  }
+  for(const mode of ['practice','live'] as const) {
+    await assert.rejects(server.startSession(owner,{requestId:crypto.randomUUID(),mode,ranked:true}),
+      error=>error instanceof GameError&&error.code==='attempts_exhausted');
+  }
+  const unranked=await server.startSession(owner,{requestId:crypto.randomUUID(),mode:'live',ranked:false});
+  assert.equal(unranked.ranked,false);assert.equal(unranked.status,'playing');
+  assert.equal((await server.bootstrap(owner)).profile?.remainingAttempts,0);
+  assert.equal(storage.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id=? AND ranked=1').get(owner.id)!.n,3);
+});
+
+test('unranked live starts still require sign-in and activated providers',async()=>{
+  await assert.rejects(server.startSession({id:crypto.randomUUID(),authenticated:false},
+    {requestId:crypto.randomUUID(),mode:'live',ranked:false}),
+    error=>error instanceof GameError&&error.code==='sign_in_required');
+  const testEnv=(globalThis as typeof globalThis & {__tradingTestEnv:{LIVE_MODELS_READY:string}}).__tradingTestEnv;
+  const previous=testEnv.LIVE_MODELS_READY;testEnv.LIVE_MODELS_READY='false';
+  try {
+    await assert.rejects(server.startSession({id:crypto.randomUUID(),authenticated:true},
+      {requestId:crypto.randomUUID(),mode:'live',ranked:false}),
+      error=>error instanceof GameError&&error.code==='provider_unavailable');
+  } finally {testEnv.LIVE_MODELS_READY=previous;}
+});
+
+test('unranked live runs retain their per-run provider call allowance',async()=>{
+  const owner={id:crypto.randomUUID(),authenticated:true};
+  const game=await server.startSession(owner,{requestId:crypto.randomUUID(),mode:'live',ranked:false});
+  storage.prepare('UPDATE sessions SET provider_calls=320 WHERE id=?').run(game.id);
+  let modelCalls=0;
+  Object.assign(globalThis,{__tradingTestDecision:async()=>{modelCalls++;throw new Error('Unexpected provider call');}});
+  await assert.rejects(server.executeCommand(owner,game.id,
+    {type:'advance',pokerRevision:game.pokerRevision,requestId:crypto.randomUUID()}),
+    error=>error instanceof GameError&&error.code==='call_limit');
+  assert.equal(modelCalls,0);
+  assert.equal(storage.prepare('SELECT provider_calls FROM sessions WHERE id=?').get(game.id)!.provider_calls,320);
+});
+
+// Embedded bootstrap session regressions, separate from live-start policy tests.
+test('bootstrap can embed the owned session without exposing it to another account',async()=>{
+  const {owner,game}=await start();
+  const embedded=await server.bootstrap(owner,true);
+  assert.equal(embedded.activeSessionId,game.id);
+  assert.deepEqual(embedded.activeSession,await server.getSession(owner,game.id));
+  const other=await server.bootstrap({id:crypto.randomUUID(),authenticated:true},true);
+  assert.equal(other.activeSessionId,null);
+  assert.equal(other.activeSession,null);
+});
+
+test('compact bootstrap keeps the active ID without serializing its session',async()=>{
+  const {owner,game}=await start();
+  for(const result of [await server.bootstrap(owner),await server.bootstrap(owner,false)]) {
+    assert.equal(result.activeSessionId,game.id);
+    assert.equal(Object.hasOwn(result,'activeSession'),false);
+  }
+});

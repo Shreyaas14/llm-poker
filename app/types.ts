@@ -15,6 +15,7 @@ export type Bootstrap = {
   week: string;
   nextReset: string;
   activeSessionId: string | null;
+  activeSession?: SessionView | null;
 };
 export type PlayerView = {
   seat: number; name: string; modelId: string; classId: string | null; className: string | null; description: string;
