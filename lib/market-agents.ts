@@ -14,7 +14,7 @@ export type MarketRound = { state: string; traders: TraderMenu[] };
 export type MarketAnswers = Record<string, string>;
 
 const STRATEGIES = {
-  maker: "Supply two-sided liquidity, earn spreads, and keep balanced inventory. Reassess newly revealed cards: tight/wide quotes blend displayed equity with market marks, while market_quotes retains the book reference. Prefer responsive quotes when public information changes, unless inventory risk calls for hold.",
+  maker: "Supply two-sided liquidity, earn spreads, and keep balanced inventory. Every new quote portfolio starts from 75% current displayed equity and 25% normalized market marks. Tight/wide quotes use that reference; bullish/bearish portfolios adjust a player's payout valuation for likely future folds, betting pressure, or bluffing. A raise is not automatically evidence of strength. Reprice when public information changes; hold only if current orders still represent your valuation, or cancel stale quotes if you cannot price their risk.",
   fundamental: "Infer expected main-pot payouts from the spectator-visible cards, betting, and market data; seek positive value.",
   equity: "Use displayed showdown equity, allowing for future folds, and diversify inventory across viable outcomes.",
   momentum: "Favor recent price trends, while avoiding excessive inventory risk.",
@@ -29,7 +29,7 @@ export function prepareMarketRound(game: Game): MarketRound {
   const eligible = visible.players.filter(player => !player.folded);
   const openingPrice = 1 / Math.max(1, eligible.length);
   const traders = game.market.traders.map(trader => {
-    const choices: Record<string, TraderOrder[]> = { hold: [] };
+    const choices: Record<string, TraderOrder[]> = { hold: [], cancel_quotes: [] };
     const order = (outcome: number, side: "buy" | "sell", quantity: number, priceTicks: number): TraderOrder => ({ outcome, side, quantity, priceTicks: Math.max(1, Math.min(99, priceTicks)) });
     const anchors = visible.players.map(player => {
       const book = market.books.find(book => book.outcome === player.seat);
@@ -47,7 +47,21 @@ export function prepareMarketRound(game: Game): MarketRound {
       ]));
       choices.tight_quotes = quotes(responsive, 2);
       choices.wide_quotes = quotes(responsive, 5);
-      choices.market_quotes = quotes(anchors, 2);
+      for (const player of eligible) {
+        const others = eligible.filter(other => other.seat !== player.seat);
+        if (!others.length) continue;
+        for (const [name, adjustment] of [["bullish", .08], ["bearish", -.08]] as const) {
+          const tilted = [...responsive];
+          const target = Math.max(0, Math.min(1, tilted[player.seat] + adjustment));
+          const otherTotal = others.reduce((sum, other) => sum + responsive[other.seat], 0);
+          tilted[player.seat] = target;
+          // Express a different belief about folds without changing the sum of
+          // expected main-pot payouts or inventing an action-to-price rule.
+          for (const other of others) tilted[other.seat] = (1 - target) *
+            (otherTotal > 0 ? responsive[other.seat] / otherTotal : 1 / others.length);
+          choices[`${name}_${player.seat}`] = quotes(tilted, 2);
+        }
+      }
     } else {
       eligible.forEach(player => {
         const outcome = player.seat;
@@ -56,6 +70,13 @@ export function prepareMarketRound(game: Game): MarketRound {
           for (const quantity of trader.kind === "noise" ? [3, 6] : [5, 15]) {
             choices[`${side}_${outcome}_${quantity}`] = [order(outcome, side, quantity, Math.round(((side === "buy" ? book?.bestAsk : book?.bestBid) ?? anchors[outcome]) * 100))];
           }
+          const direction = side === "buy" ? 1 : -1;
+          const fairTicks = Math.round(visible.odds.equities[outcome] * 100);
+          const quantity = trader.kind === "noise" ? 6 : 15;
+          // Book-taking choices remain available. These alternatives can move
+          // a stale book toward card value, or express a bounded view on folds.
+          choices[`${side}_${outcome}_value`] = [order(outcome, side, quantity, fairTicks - direction * 2)];
+          choices[`${side}_${outcome}_conviction`] = [order(outcome, side, quantity, fairTicks + direction * 8)];
         }
       });
     }
@@ -63,10 +84,10 @@ export function prepareMarketRound(game: Game): MarketRound {
   });
   return {
     state: JSON.stringify({
-      rules: "Play-money prediction market. A share pays $1 divided among main-pot winners; losing shares pay zero. Choose independently for each named trader. The spectator account belongs to the human, not the named trader. You see the same revealed cards, equity calculation, and trader holdings as the human spectator, not a private server forecast. Future cards are unknown. Quotes replace that trader's previous orders. Hold keeps existing orders. Orders are limited to available cash and owned shares at execution.",
+      rules: "Play-money prediction market. A share pays $1 divided among main-pot winners; losing shares pay zero. Choose independently for each named trader. The spectator account belongs to the human, not the named trader. You see the same revealed cards, equity calculation, and trader holdings as the human spectator, not a private server forecast. Future cards are unknown. Showdown equity assumes no further folds; betting, bluffing, and likely folds can change your expected payout valuation. Maker bullish/bearish choices move one player's reference by up to eight percentage points and redistribute the difference among other eligible players. Value limits use card equity with a two-cent margin; conviction limits allow an eight-cent adjustment. Other buy/sell choices take displayed quotes. Quotes replace that trader's previous orders. Hold keeps existing orders; cancel_quotes removes them without placing new orders. Orders are limited to available cash and owned shares at execution.",
       hand: visible.hand, street: visible.street, board: visible.board, pot: visible.pot,
       actor: visible.actor, button: visible.button,
-      players: visible.players.map(p => ({ seat: p.seat, name: p.name, cards: p.cards, folded: p.folded, allIn: p.allIn, stack: p.stack, action: p.lastAction, personality: p.className, description: p.description })),
+      players: visible.players.map(p => ({ seat: p.seat, name: p.name, cards: p.cards, folded: p.folded, allIn: p.allIn, stack: p.stack, bet: p.bet, contributed: p.contributed, action: p.lastAction, personality: p.className, description: p.description })),
       showdownEquity: visible.odds, tick: market.tick, history: market.history,
       books: market.books.map(book => ({ outcome: book.outcome, bids: book.bids.slice(0,6), asks: book.asks.slice(0,6), bestBid: book.bestBid, bestAsk: book.bestAsk, midpoint: book.midpoint, lastPrice: book.lastPrice })),
       recentTrades: market.recentTrades.slice(0,6),
@@ -83,7 +104,15 @@ export async function requestMarketDecisions(round: MarketRound, apiKey: string)
     signal: AbortSignal.timeout(MARKET_ROUND_TIMEOUT_MS),
     body: JSON.stringify({ model: JEV_MODEL, state: round.state,
       questions: Object.fromEntries(round.traders.map(t => [t.id, { type: "choice", instructions: `Choose the next order action for ${t.id}. ${t.instructions} Maximize this trader's final play-money balance, accounting for its holdings and other traders' quotes.`,
-        criteria: Object.fromEntries(Object.entries(t.choices).map(([id, orders]) => [id, orders.length ? `Replace quotes with these limit orders: ${JSON.stringify(orders)}` : "Keep current orders and do not submit new ones."])),
+        criteria: Object.fromEntries(Object.entries(t.choices).map(([id, orders]) => [id, id === "hold" ? "Keep current orders unchanged; this can preserve stale prices. Do not submit new ones."
+          : id === "cancel_quotes" ? "Cancel all current orders; submit no new orders."
+          : `${id === "tight_quotes" || id === "wide_quotes"
+            ? `Reprice all outcomes around 75% current card equity + 25% normalized market marks, with ${id === "tight_quotes" ? "two" : "five"}-cent spreads.`
+            : id.startsWith("bullish_") || id.startsWith("bearish_")
+              ? `${id.startsWith("bullish_") ? "Increase" : "Decrease"} seat ${id.split("_")[1]}'s payout reference by up to 8 percentage points from the 75% card-equity blend, redistributing the difference among other eligible seats; use two-cent spreads.`
+              : id.endsWith("_value") ? "Trade at current card-equity value with a two-cent margin."
+                : id.endsWith("_conviction") ? "Trade at an aggressive card-equity limit allowing an eight-cent belief adjustment for likely folds or bluffing."
+                  : "Trade at the displayed bid or ask, which may be stale."} Replace all quotes; limits in cents (seat, side, shares, limit): ${orders.map(o => `${o.outcome},${o.side},${o.quantity},${o.priceTicks}`).join("; ")}`])),
       }])) }),
   }).catch(() => { throw new ProviderError("Jev traders could not respond in time."); });
   if (!response.ok) throw new ProviderError("Jev traders are temporarily unavailable.");

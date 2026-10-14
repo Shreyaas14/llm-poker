@@ -1,0 +1,507 @@
+{
+  "kind": "REAL LIVE MODEL INTEGRATION; isolated in-memory database; no browser/auth UI coverage",
+  "status": "passed",
+  "startedAt": "2026-10-14T23:01:25.701Z",
+  "finishedAt": "2026-10-14T23:04:24.951Z",
+  "elapsedMs": 179250,
+  "source": {
+    "commit": "7c777f0b91b2587ac63a2a63b89e675ad156cba2",
+    "sha256": {
+      "lib/server.ts": "72436a49c55b41801862e1df428d4ded1d00b2ebccc153b89a81b2d02ca98a0b",
+      "lib/game.ts": "4029708d79c69a46d14736c805c7c168947d5111dfd58a7c61b11bd9427f906b",
+      "lib/market.ts": "83a725265037f36faccffe44f3ba582dd99a50e1795eb373c2ab1b8220e4f52d",
+      "lib/market-agents.ts": "97e0823a2f6e4532d706c0200b22da71e31600c00a32eb71812e690c5e174d0e",
+      "lib/providers.ts": "472434167eef31b4d4e62f5896bca683cc05caac96e2b7afe7ed200f3304d132",
+      "scripts/verify-live-market.mjs": "ca46747c7d82d1d8db65cbb9daf3466616380bf971e31dd8af8bb73f9247b652"
+    }
+  },
+  "modelCalls": {
+    "typesafe-ai/jev": 59,
+    "openai/gpt-6-luna": 9,
+    "anthropic/claude-haiku-5.5": 8,
+    "google/gemini-3.8-flash": 5,
+    "spacexai/grok-4.1-fast-non-reasoning": 8
+  },
+  "reportedCostUsd": 0.010264400000000005,
+  "reportedCostScope": "Partial subtotal: 30 poker requests include cost metadata; 59 successful Jev requests are missing costs in this historical report. This is not the run's total cost.",
+  "choiceFamilies": {
+    "tight_quotes": 118,
+    "hold": 359,
+    "value": 134,
+    "book_take": 265,
+    "conviction": 66,
+    "cancel_quotes": 2
+  },
+  "final": {
+    "cash": 997.89,
+    "pnl": -2.1100000000000136,
+    "results": [
+      {
+        "hand": 1,
+        "winners": [
+          1
+        ],
+        "payout": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "cashBefore": 1000,
+        "cashAfter": 999.6,
+        "pnl": -0.39999999999997726,
+        "description": "Claude wins the main pot."
+      },
+      {
+        "hand": 2,
+        "winners": [
+          1
+        ],
+        "payout": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "cashBefore": 999.6,
+        "cashAfter": 999.27,
+        "pnl": -0.3300000000000409,
+        "description": "Claude wins the main pot."
+      },
+      {
+        "hand": 3,
+        "winners": [
+          1
+        ],
+        "payout": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "cashBefore": 999.27,
+        "cashAfter": 998.82,
+        "pnl": -0.4499999999999318,
+        "description": "Claude wins the main pot."
+      },
+      {
+        "hand": 4,
+        "winners": [
+          1
+        ],
+        "payout": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "cashBefore": 998.82,
+        "cashAfter": 998.51,
+        "pnl": -0.3100000000000591,
+        "description": "Claude wins the main pot."
+      },
+      {
+        "hand": 5,
+        "winners": [
+          1
+        ],
+        "payout": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "cashBefore": 998.51,
+        "cashAfter": 997.89,
+        "pnl": -0.6200000000000045,
+        "description": "Claude wins the main pot."
+      }
+    ],
+    "actions": 30
+  },
+  "assertions": {
+    "completeFiveHands": true,
+    "pnlEqualsFinalCashLess1000": true,
+    "summedHandPnlMatchesFinal": true,
+    "allFourPokerModelsCalled": true,
+    "jevCalled": true,
+    "realFillsEveryHand": true,
+    "syntheticFillsEveryHand": true,
+    "significantNonSettlementPriceChangesEveryHand": true,
+    "humanBoughtTwoShares": true,
+    "humanSoldOneShareLater": true,
+    "fundsConserved": true,
+    "publicProjectionContainsNoDeck": true
+  },
+  "conservationChecks": 225,
+  "hands": {
+    "1": {
+      "filledShares": 388,
+      "syntheticFilledShares": 386,
+      "humanBought": 2,
+      "humanSold": 0,
+      "significantNonSettlementPriceChanges": 12
+    },
+    "2": {
+      "filledShares": 1033,
+      "syntheticFilledShares": 1030,
+      "humanBought": 2,
+      "humanSold": 1,
+      "significantNonSettlementPriceChanges": 18
+    },
+    "3": {
+      "filledShares": 442,
+      "syntheticFilledShares": 439,
+      "humanBought": 2,
+      "humanSold": 1,
+      "significantNonSettlementPriceChanges": 6
+    },
+    "4": {
+      "filledShares": 344,
+      "syntheticFilledShares": 341,
+      "humanBought": 2,
+      "humanSold": 1,
+      "significantNonSettlementPriceChanges": 9
+    },
+    "5": {
+      "filledShares": 565,
+      "syntheticFilledShares": 563,
+      "humanBought": 2,
+      "humanSold": 0,
+      "significantNonSettlementPriceChanges": 7
+    }
+  },
+  "eventAnalysis": {
+    "method": "Pairs a poker revision change with the first completed Jev request started after that event, then a snapshot at the same poker revision. Excludes settlement and marks folded positions zero. This establishes observed event-linked repricing, not forecast calibration or causality independent of other market activity.",
+    "summary": {
+      "paired": 25,
+      "significant": 17,
+      "significantWithoutInterveningHumanTrades": 16,
+      "byType": {
+        "board": 2,
+        "fold": 10,
+        "betting": 5
+      }
+    },
+    "examples": [
+      {
+        "kind": "board",
+        "hand": 2,
+        "pokerRevision": 20007,
+        "street": "turn",
+        "boardBefore": [
+          "7s",
+          "4c",
+          "6s"
+        ],
+        "boardAfter": [
+          "7s",
+          "4c",
+          "6s",
+          "9s"
+        ],
+        "newsAt": "2026-10-14T23:02:43.787Z",
+        "afterAt": "2026-10-14T23:02:45.486Z",
+        "responseDelayMs": 1699,
+        "news": [
+          "GPT calls.",
+          "Turn revealed."
+        ],
+        "jevStartedAt": "2026-10-14T23:02:45.133Z",
+        "jevLatencyMs": 332,
+        "jevChoices": {
+          "tight_quotes": 2,
+          "hold": 6,
+          "buy_1_15": 3,
+          "sell_1_15": 2,
+          "buy_0_3": 3
+        },
+        "interveningHumanTrades": [],
+        "significant": true,
+        "players": [
+          {
+            "seat": 0,
+            "name": "GPT",
+            "folded": false,
+            "equityBefore": 0.44634146341463415,
+            "equityAfter": 0.25,
+            "marketAtNews": 0.49,
+            "marketAfterFreshJev": 0.30500000000000005,
+            "change": -0.18499999999999994,
+            "gapClosed": 0.18499999999999994
+          },
+          {
+            "seat": 1,
+            "name": "Claude",
+            "folded": false,
+            "equityBefore": 0.5536585365853659,
+            "equityAfter": 0.75,
+            "marketAtNews": 0.5549999999999999,
+            "marketAfterFreshJev": 0.6950000000000001,
+            "change": 0.14000000000000012,
+            "gapClosed": 0.14000000000000012
+          },
+          {
+            "seat": 2,
+            "name": "Gemini",
+            "folded": true,
+            "equityBefore": 0,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          },
+          {
+            "seat": 3,
+            "name": "Grok",
+            "folded": true,
+            "equityBefore": 0,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          }
+        ]
+      },
+      {
+        "kind": "board",
+        "hand": 2,
+        "pokerRevision": 20004,
+        "street": "flop",
+        "boardBefore": [],
+        "boardAfter": [
+          "7s",
+          "4c",
+          "6s"
+        ],
+        "newsAt": "2026-10-14T23:02:26.849Z",
+        "afterAt": "2026-10-14T23:02:27.299Z",
+        "responseDelayMs": 450,
+        "news": [
+          "GPT calls.",
+          "Flop revealed."
+        ],
+        "jevStartedAt": "2026-10-14T23:02:26.878Z",
+        "jevLatencyMs": 408,
+        "jevChoices": {
+          "tight_quotes": 2,
+          "hold": 6,
+          "buy_1_15": 3,
+          "sell_1_15": 1,
+          "buy_0_15": 1,
+          "buy_0_3": 3
+        },
+        "interveningHumanTrades": [],
+        "significant": true,
+        "players": [
+          {
+            "seat": 0,
+            "name": "GPT",
+            "folded": false,
+            "equityBefore": 0.3968505859375,
+            "equityAfter": 0.44634146341463415,
+            "marketAtNews": 0.45,
+            "marketAfterFreshJev": 0.46499999999999997,
+            "change": 0.014999999999999958,
+            "gapClosed": -0.014999999999999958
+          },
+          {
+            "seat": 1,
+            "name": "Claude",
+            "folded": false,
+            "equityBefore": 0.6031494140625,
+            "equityAfter": 0.5536585365853659,
+            "marketAtNews": 0.55,
+            "marketAfterFreshJev": 0.5700000000000001,
+            "change": 0.020000000000000018,
+            "gapClosed": -0.012682926829268304
+          },
+          {
+            "seat": 2,
+            "name": "Gemini",
+            "folded": true,
+            "equityBefore": 0,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          },
+          {
+            "seat": 3,
+            "name": "Grok",
+            "folded": true,
+            "equityBefore": 0,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          }
+        ]
+      },
+      {
+        "kind": "fold",
+        "hand": 4,
+        "pokerRevision": 40004,
+        "street": "preflop",
+        "boardBefore": [],
+        "boardAfter": [],
+        "newsAt": "2026-10-14T23:03:56.962Z",
+        "afterAt": "2026-10-14T23:03:58.027Z",
+        "responseDelayMs": 1065,
+        "news": [
+          "Gemini folds."
+        ],
+        "jevStartedAt": "2026-10-14T23:03:57.658Z",
+        "jevLatencyMs": 323,
+        "jevChoices": {
+          "tight_quotes": 2,
+          "hold": 5,
+          "buy_1_conviction": 2,
+          "buy_3_value": 2,
+          "buy_3_15": 1,
+          "sell_1_5": 1,
+          "buy_1_3": 3
+        },
+        "interveningHumanTrades": [],
+        "significant": true,
+        "players": [
+          {
+            "seat": 0,
+            "name": "GPT",
+            "folded": true,
+            "equityBefore": 0,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          },
+          {
+            "seat": 1,
+            "name": "Claude",
+            "folded": false,
+            "equityBefore": 0.1918131510416669,
+            "equityAfter": 0.3204345703125,
+            "marketAtNews": 0.21000000000000002,
+            "marketAfterFreshJev": 0.35,
+            "change": 0.13999999999999996,
+            "gapClosed": 0.080869140625
+          },
+          {
+            "seat": 2,
+            "name": "Gemini",
+            "folded": true,
+            "equityBefore": 0.439860026041666,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          },
+          {
+            "seat": 3,
+            "name": "Grok",
+            "folded": false,
+            "equityBefore": 0.36832682291666646,
+            "equityAfter": 0.6795654296875,
+            "marketAtNews": 0.365,
+            "marketAfterFreshJev": 0.675,
+            "change": 0.31000000000000005,
+            "gapClosed": 0.31000000000000005
+          }
+        ]
+      },
+      {
+        "kind": "betting",
+        "hand": 2,
+        "pokerRevision": 20008,
+        "street": "turn",
+        "boardBefore": [
+          "7s",
+          "4c",
+          "6s",
+          "9s"
+        ],
+        "boardAfter": [
+          "7s",
+          "4c",
+          "6s",
+          "9s"
+        ],
+        "newsAt": "2026-10-14T23:02:49.118Z",
+        "afterAt": "2026-10-14T23:02:52.632Z",
+        "responseDelayMs": 3514,
+        "news": [
+          "GPT checks."
+        ],
+        "jevStartedAt": "2026-10-14T23:02:52.138Z",
+        "jevLatencyMs": 475,
+        "jevChoices": {
+          "tight_quotes": 2,
+          "hold": 8,
+          "buy_0_15": 2,
+          "sell_1_15": 1,
+          "buy_0_3": 3
+        },
+        "interveningHumanTrades": [],
+        "significant": true,
+        "players": [
+          {
+            "seat": 0,
+            "name": "GPT",
+            "folded": false,
+            "equityBefore": 0.25,
+            "equityAfter": 0.25,
+            "marketAtNews": 0.33999999999999997,
+            "marketAfterFreshJev": 0.265,
+            "change": -0.07499999999999996,
+            "gapClosed": 0.07499999999999996
+          },
+          {
+            "seat": 1,
+            "name": "Claude",
+            "folded": false,
+            "equityBefore": 0.75,
+            "equityAfter": 0.75,
+            "marketAtNews": 0.735,
+            "marketAfterFreshJev": 0.735,
+            "change": 0,
+            "gapClosed": 0
+          },
+          {
+            "seat": 2,
+            "name": "Gemini",
+            "folded": true,
+            "equityBefore": 0,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          },
+          {
+            "seat": 3,
+            "name": "Grok",
+            "folded": true,
+            "equityBefore": 0,
+            "equityAfter": 0,
+            "marketAtNews": 0,
+            "marketAfterFreshJev": 0,
+            "change": 0,
+            "gapClosed": 0
+          }
+        ]
+      }
+    ],
+    "limitations": [
+      "Server integration used real poker and Jev providers with an isolated in-memory database; it does not verify browser rendering, sign-in, or production hosting.",
+      "Examples pair fresh Jev calls with unchanged poker revisions and exclude intervening human trades. Other synthetic trading still occurs, so observed price changes are not causal experiments.",
+      "Observed betting-only changes do not establish calibrated bluff or fold probabilities. All observed makers chose tight_quotes; no bullish/bearish maker selection was observed in this run.",
+      "Card-based showdown equity assumes no further folds; traded prices can differ and need not sum to exactly one."
+    ]
+  }
+}

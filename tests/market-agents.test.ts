@@ -45,7 +45,9 @@ test("round context matches spectator cards, equity, depth, and trader holdings 
   assert.ok(state.traders.every((t:Record<string,unknown>)=>!("cash" in t)&&!("cashUnits" in t)&&!("bias" in t)&&!("beliefs" in t)));
   assert.equal(state.deck,undefined);assert.equal(state.rngState,undefined);
   assert.ok(!round.state.includes('rngState'));assert.ok(!round.state.includes('seed'));
-  assert.equal(Object.keys(round.traders[0].choices).length,4);
+  assert.equal(Object.keys(round.traders[0].choices).length,12);
+  assert.equal(state.players[0].bet,visible.players[0].bet);
+  assert.equal(state.players[0].contributed,visible.players[0].contributed);
 });
 
 test("reservations throttle duplicate calls, survive retries, and enforce the game budget", () => {
@@ -131,6 +133,13 @@ test("Gateway adapter batches typed choices and rejects malformed, missing, or u
     assert.equal(url,'https://ai-gateway.vercel.sh/v1/evaluate');
     const body=JSON.parse(String(init?.body));assert.equal(body.model,JEV_MODEL);assert.equal(Object.keys(body.questions).length,16);
     assert.equal(body.questions['trader-0'].type,'choice');assert.ok(init?.signal);
+    assert.match(body.questions['trader-0'].criteria.hold,/Keep current/);
+    assert.match(body.questions['trader-0'].criteria.cancel_quotes,/Cancel all/);
+    assert.match(body.questions['trader-0'].criteria.tight_quotes,/limits in cents/);
+    assert.match(body.questions['trader-0'].criteria.tight_quotes,/75% current card equity/);
+    assert.match(body.questions['trader-0'].criteria.bullish_0,/Increase seat 0.*up to 8 percentage points/);
+    assert.match(body.questions['trader-0'].criteria.bearish_0,/Decrease seat 0.*up to 8 percentage points/);
+    assert.equal(Object.hasOwn(body.questions['trader-0'].criteria,'market_quotes'),false);
     return Response.json(response);
   };
   try {
@@ -194,15 +203,18 @@ test("unseen forecasts, private trader data, deck order, and RNG cannot change J
   assert.deepEqual(reserved.market.values,[.25,.25,.25,.25]);
 });
 
-test("opening prices are neutral and displayed market quotes determine later order limits", () => {
+test("book-taking choices retain displayed quotes while makers offer only responsive portfolios", () => {
   const game=fixture(),opening=prepareMarketRound(game);
   assert.deepEqual(opening.traders[2].choices.buy_0_5,[{outcome:0,side:'buy',quantity:5,priceTicks:25}]);
   game.market=replaceTraderOrders(game.market,'trader-0',[{outcome:0,side:'buy',quantity:5,priceTicks:41},{outcome:0,side:'sell',quantity:5,priceTicks:47}]);
   const quoted=prepareMarketRound(game);
   assert.equal(quoted.traders[2].choices.buy_0_5[0].priceTicks,47);
   assert.equal(quoted.traders[2].choices.sell_0_5[0].priceTicks,41);
-  const maker=quoted.traders[0].choices.market_quotes.filter(o=>o.outcome===0);
-  assert.equal(maker[0].priceTicks,42);assert.equal(maker[1].priceTicks,46);
+  const maker=quoted.traders[0].choices.tight_quotes.filter(o=>o.outcome===0);
+  const reference=.75*viewGame(game,false,NOW).odds.equities[0]+.25*(.44/(.44+.25*3));
+  assert.equal(maker[0].priceTicks,Math.max(1,Math.floor(reference*100+1e-8)-2));
+  assert.equal(maker[1].priceTicks,Math.min(99,Math.ceil(reference*100-1e-8)+2));
+  assert.ok(quoted.traders.filter(t=>t.id==='trader-0'||t.id==='trader-1').every(t=>!Object.hasOwn(t.choices,'market_quotes')));
   game.poker.players[0].folded=true;
   const folded=prepareMarketRound(game);
   assert.ok(folded.traders.every(t=>Object.values(t.choices).flat().every(o=>o.outcome!==0)));
@@ -242,4 +254,74 @@ test("Live maker quotes react to revealed cards rather than recycling neutral bo
   assert.notDeepEqual(flop.market.books.map(b=>[b.bestBid,b.bestAsk]),opening.market.books.map(b=>[b.bestBid,b.bestAsk]),'successful maker decisions must be able to reprice after new visible cards');
   t.diagnostic(JSON.stringify({openingQuotes:opening.market.books.map(b=>[b.bestBid,b.bestAsk]),flopQuotes:flop.market.books.map(b=>[b.bestBid,b.bestAsk])}));
   assertFunded(game.market);
+});
+
+test("a visible raise offers funded maker repricing in either direction without forcing a belief", async () => {
+  const {createHand}=await import('../lib/poker.ts');
+  let game=fixture();game.poker=createHand(42,0,1000);
+  const raisingSeat=game.poker.actor!,before=viewGame(game,false,NOW);
+  game=await commandGame(game,{type:'advance',pokerRevision:game.poker.revision},NOW+100,
+    async()=>({type:'raise',amount:180}));
+  assert.deepEqual(viewGame(game,false,NOW+100).odds,before.odds,'betting does not change the card calculation');
+  const held=reserveMarketRound(game,'react-to-raise',NOW+200)!;
+  const round=prepareMarketRound(held),context=JSON.parse(round.state);
+  assert.equal(context.players[raisingSeat].action,'Raise to 180');
+  assert.equal(context.players[raisingSeat].bet,180);
+  assert.equal(context.players[raisingSeat].contributed,game.poker.players[raisingSeat].contributed);
+  const quote=(choice:string)=>{
+    const result=finishMarketRound(held,'react-to-raise',round,
+      Object.fromEntries(round.traders.map(t=>[t.id,t.id==='trader-0'?choice:'hold'])),NOW+201)!;
+    assertFunded(result.market);
+    return viewGame(result,false,NOW+201).market.books;
+  };
+  const baseline=quote('tight_quotes'),bullish=quote(`bullish_${raisingSeat}`),bearish=quote(`bearish_${raisingSeat}`);
+  assert.ok(bullish[raisingSeat].midpoint!>baseline[raisingSeat].midpoint!+.07);
+  assert.ok(bearish[raisingSeat].midpoint!<baseline[raisingSeat].midpoint!-.07);
+  assert.ok(baseline.some((book,seat)=>seat!==raisingSeat&&bullish[seat].midpoint!<book.midpoint!), 'a bullish tilt redistributes probability from other eligible players');
+  assert.deepEqual(held.market.orders,[],'offering choices does not itself place quotes');
+});
+
+test("value and conviction limits can cross stale quotes using only displayed card equity", () => {
+  const game=fixture();
+  game.poker.street='river';game.poker.board=['Qs','Js','Ts','2c','3d'];
+  [['As','Ks'],['Qd','Qh'],['Jd','Jh'],['Td','Th']].forEach((hole,seat)=>game.poker.players[seat].hole=hole);
+  game.market=replaceTraderOrders(game.market,'trader-0',[0,1,2,3].flatMap(outcome=>[
+    {outcome,side:'buy' as const,quantity:25,priceTicks:20},
+    {outcome,side:'sell' as const,quantity:25,priceTicks:30},
+  ]));
+  const round=prepareMarketRound(game),choices=round.traders[2].choices;
+  assert.deepEqual(JSON.parse(round.state).showdownEquity.equities,[1,0,0,0]);
+  assert.equal(choices.buy_0_15[0].priceTicks,30,'book-taking remains optional');
+  assert.equal(choices.buy_0_value[0].priceTicks,98);
+  assert.equal(choices.buy_0_conviction[0].priceTicks,99);
+  assert.equal(choices.sell_1_value[0].priceTicks,2);
+  assert.equal(choices.sell_1_conviction[0].priceTicks,1);
+  const executed=replaceTraderOrders(game.market,'trader-2',choices.buy_0_value);
+  assert.equal(executed.fills.at(-1)?.priceTicks,30,'the actual resting order sets the execution price');
+  assertFunded(executed);
+  for(const trader of round.traders) {
+    assert.ok(Object.keys(trader.choices).length<=34,'bounded choice count');
+    for(const orders of Object.values(trader.choices)) {
+      assert.ok(orders.length<=24);
+      assert.ok(orders.every(o=>o.quantity>=1&&o.quantity<=25&&o.priceTicks>=1&&o.priceTicks<=99));
+    }
+  }
+  game.poker.players[1].folded=true;
+  assert.ok(prepareMarketRound(game).traders.every(t=>Object.values(t.choices).flat().every(o=>o.outcome!==1)));
+});
+
+test("cancel_quotes removes only the selected trader's orders while hold preserves them", () => {
+  let game=fixture();
+  game.market=replaceTraderOrders(game.market,'trader-0',[{outcome:0,side:'sell',quantity:10,priceTicks:50}]);
+  game.market=replaceTraderOrders(game.market,'trader-1',[{outcome:1,side:'sell',quantity:10,priceTicks:50}]);
+  game.market=placeHumanOrder(game.market,{outcome:0,side:'buy',quantity:3,limitPrice:.01,orderType:'limit'}).state;
+  game=reserveMarketRound(game,'cancel-quotes',NOW)!;
+  const round=prepareMarketRound(game),hold=Object.fromEntries(round.traders.map(t=>[t.id,'hold']));
+  const held=finishMarketRound(game,'cancel-quotes',round,hold,NOW+1)!;
+  assert.deepEqual(held.market.orders,game.market.orders);
+  const canceled=finishMarketRound(game,'cancel-quotes',round,{...hold,'trader-0':'cancel_quotes'},NOW+1)!;
+  assert.deepEqual(canceled.market.orders,game.market.orders.filter(o=>o.owner!=='trader-0'));
+  assert.deepEqual(canceled.market.accounts,game.market.accounts);
+  assert.deepEqual(canceled.market.fills,game.market.fills);
+  assertFunded(canceled.market);
 });
