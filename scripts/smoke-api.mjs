@@ -22,7 +22,7 @@ let game=await call('/api/session','POST',{requestId,mode:live?'live':'practice'
 assert.equal(game.mode,live?'live':'practice');
 const incompleteReplay = await call(`/api/session/${game.id}/replay`, 'GET', undefined, 409);
 assert.equal(incompleteReplay.code, 'not_complete');
-const initialVersion = game.version;
+const initialVersion = 0; // Every recording starts at the initial deal, including resumed runs.
 const id=game.id, commandPath=`/api/session/${id}/command`;
 const command=body=>call(commandPath,'POST',{requestId:crypto.randomUUID(),...body});
 const inaccessible=await fetch(`${origin}/api/session/${id}`,{headers:{cookie:anonymousCookie}});assert.equal(inaccessible.status,404);
@@ -35,7 +35,7 @@ await call(commandPath,'POST',{requestId:crypto.randomUUID(),type:'advance',poke
 const pausedTick=await command({type:'tick'});assert.deepEqual(pausedTick.market,game.market);
 assert.equal(pausedTick.marketSecondsRemaining,game.marketSecondsRemaining);
 game=await command({type:'playback',paused:false});assert.equal(game.paused,false);assert.equal(game.tradingOpen,true);
-let expectedCash=1000, count=0;const seen=new Set();
+let expectedCash=game.market.cash, count=0;const seen=new Set();
 while(game.status!=='complete') {
   if(game.status==='hand_complete') {game=await command({type:'next_hand',pokerRevision:game.pokerRevision});continue;}
   if(game.tradingOpen && game.market.positions.every(p=>p.quantity===0)) {
@@ -59,8 +59,13 @@ while(game.status!=='complete') {
     assert.ok(Math.abs(game.market.cash-expectedCash)<1e-6);
     console.log(`Hand ${game.hand}: settled ${game.market.cash.toFixed(4)} credits`);
   }
-  const oldOrder={requestId:crypto.randomUUID(),type:'order',pokerRevision:before.pokerRevision,outcome:0,side:'buy',quantity:1,limitPrice:.01,orderType:'ioc'};
-  await call(commandPath,'POST',oldOrder,409);
+  const oldOrder={requestId:crypto.randomUUID(),type:'order',hand:before.hand,pokerRevision:before.pokerRevision,outcome:0,side:'buy',quantity:1,limitPrice:.01,orderType:'ioc'};
+  if(game.status==='playing') {
+    const tradable=game.market.books.find(book=>book.bestAsk!==null && !game.players[book.outcome].folded);
+    if(tradable) game=await call(commandPath,'POST',{...oldOrder,outcome:tradable.outcome});
+    assert.equal(game.pokerRevision,before.pokerRevision+1);
+    expectedCash=game.market.cash;
+  } else await call(commandPath,'POST',oldOrder,409);
   if(count>200)throw new Error('Game did not terminate.');
 }
 assert.equal(game.results.length,5);assert.equal(game.pnl,game.market.cash-1000);

@@ -86,7 +86,27 @@ export function catchUp(game: Game, now: number) {
   }
 }
 export type LiveDecision = (observation: ReturnType<typeof getObservation>, model: string, feedback?: string) => Promise<Action>;
-export async function commandGame(source: Game, command: SessionCommand, now: number, chooseLive?: LiveDecision): Promise<Game> {
+export type PreparedPokerDecision = { action: Action; calls: number; hand: number; pokerRevision: number };
+
+/** Resolve a decision from a fixed poker observation; no market state is committed here. */
+export async function preparePokerDecision(game: Game, chooseLive?: LiveDecision): Promise<PreparedPokerDecision> {
+  if (!isPlaying(game) || game.poker.actor === null) throw new GameError("This hand is already settled.");
+  const observation = getObservation(game.poker, game.poker.actor);
+  let action: Action, calls = 0;
+  if (game.mode === "live") {
+    if (!chooseLive) throw new GameError("Live model access is not configured.", 503, "provider_unavailable");
+    if (game.providerCalls >= 320) throw new GameError("This run reached its model-call limit.", 429, "call_limit");
+    action = await chooseLive(observation, game.models[game.poker.actor]); calls++;
+    try { applyAction(game.poker, action); }
+    catch (error) {
+      action = await chooseLive(observation, game.models[game.poker.actor], error instanceof Error ? error.message : "Illegal action"); calls++;
+    }
+  } else action = decidePractice(observation, randomNumber());
+  applyAction(game.poker, action); // Validate before entering the commit/retry phase.
+  return { action, calls, hand: game.hand, pokerRevision: game.poker.revision };
+}
+
+export async function commandGame(source: Game, command: SessionCommand, now: number, chooseLive?: LiveDecision, prepared?: PreparedPokerDecision): Promise<Game> {
   const game = structuredClone(source);
   ensureOdds(game);
   if (command.type === "playback") {
@@ -101,15 +121,16 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     }
     return game;
   }
-  if (game.pausedAt !== undefined) {
+  if (game.pausedAt !== undefined && !(command.type === "advance" && prepared)) {
     if (command.type === "tick") return game;
     throw new GameError("The game is paused. Press Play to continue trading and gameplay.", 409, "GAME_PAUSED");
   }
   catchUp(game, now);
   if (command.type === "tick") return game;
   if (command.type === "order") {
-    if (command.pokerRevision !== game.poker.revision) throw new GameError("The poker state changed. Review the table before placing this order.", 409, "stale_state");
-    if (!isPlaying(game) || now >= game.eventUntil) throw new GameError("This trading window is closed. Continue to the next poker action.");
+    const hand = command.hand ?? Math.max(1, Math.floor(command.pokerRevision / 10000));
+    if (hand !== game.hand) throw new GameError("This hand has ended. Review the new market before trading.", 409, "stale_hand");
+    if (!isPlaying(game)) throw new GameError("This hand has settled. Trading is closed.", 409, "hand_settled");
     let order;
     try { order = placeHumanOrder(game.market, command); }
     catch (error) { throw new GameError(error instanceof Error ? error.message : "This order could not be placed."); }
@@ -119,7 +140,8 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     return game;
   }
   if (command.type === "cancel") {
-    if (command.pokerRevision !== game.poker.revision) throw new GameError("The poker state changed. Review your current orders.",409,"stale_state");
+    const hand = command.hand ?? Math.max(1, Math.floor(command.pokerRevision / 10000));
+    if (hand !== game.hand) throw new GameError("This hand has ended. Review your current orders.",409,"stale_hand");
     try { game.market = cancelHumanOrder(game.market, command.orderId); }
     catch { throw new GameError("You can only cancel your own orders."); }
     log(game, "Unfilled order canceled. Reserved funds released.", "trade", now);
@@ -143,19 +165,11 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   }
   if (!isPlaying(game) || game.poker.actor === null) throw new GameError("This hand is already settled.");
   const actor = game.poker.actor;
-  const observation = getObservation(game.poker, actor);
-  let action: Action;
-  if (game.mode === "live") {
-    if (!chooseLive) throw new GameError("Live model access is not configured.", 503, "provider_unavailable");
-    if (game.providerCalls >= 320) throw new GameError("This run reached its model-call limit.", 429, "call_limit");
-    action = await chooseLive(observation, game.models[actor]);
-    game.providerCalls++;
-    try { applyAction(game.poker, action); }
-    catch (error) {
-      action = await chooseLive(observation, game.models[actor], error instanceof Error ? error.message : "Illegal action");
-      game.providerCalls++;
-    }
-  } else action = decidePractice(observation, randomNumber());
+  const decision = prepared ?? await preparePokerDecision(game, chooseLive);
+  if (decision.hand !== game.hand || decision.pokerRevision !== game.poker.revision)
+    throw new GameError("The table has advanced. Refresh the current action.", 409, "stale_state");
+  const action = decision.action;
+  game.providerCalls += decision.calls;
   const oldStreet = game.poker.street;
   game.poker = applyAction(game.poker, action);
   ensureOdds(game);
@@ -174,8 +188,8 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     game.values = estimateValues(game.poker, randomNumber(), 512);
     // Publish the changed poker state before any informed synthetic arrivals.
     game.market = advanceMarket(game.market, game.values, 0);
-    game.eventUntil = Date.now() + TRADING_WINDOW_MS;
-    game.lastTickAt = Date.now();
+    game.eventUntil = (game.pausedAt ?? now) + TRADING_WINDOW_MS;
+    game.lastTickAt = game.pausedAt ?? now;
   }
   return game;
 }
@@ -200,7 +214,7 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
     winners: [...game.poker.mainPotWinners], winningCards: ended && game.poker.board.length === 5 ? [...new Set(game.poker.mainPotWinners.flatMap(seat => evaluateHand([...game.poker.players[seat].hole, ...game.poker.board]).cards))] : [],
     market, odds: { ...odds, equities: [...odds.equities] }, results: game.results, activity: game.activity,
     pnl: ended ? market.cash - 1000 : market.totalLiquidationValue - 1000,
-    tradingOpen: !ended && !busy && !paused && now < game.eventUntil,
+    tradingOpen: !ended && !paused,
     marketSecondsRemaining: Math.max(0, Math.ceil((game.eventUntil - marketNow) / 1000)),
   };
 }

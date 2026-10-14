@@ -257,29 +257,50 @@ test("legacy saved games keep their original classes through views and the next 
   assert.deepEqual(game.poker.classIds, originalIds);
 });
 
-test("stale orders and stale poker actions reject without touching the supplied state", async () => {
-  const game = gameFixture(), before = JSON.stringify(game);
-  await assert.rejects(commandGame(game, { type: "order", pokerRevision: game.poker.revision + 1,
-    outcome: 0, side: "buy", quantity: 1, limitPrice: 0.5, orderType: "ioc" }, NOW),
-  error => error instanceof GameError && error.status === 409 && error.code === "stale_state");
-  await assert.rejects(commandGame(game, { type: "advance", pokerRevision: 99999 }, NOW, foldIfPossible), /table has advanced/);
-  assert.equal(JSON.stringify(game), before);
-  game.hand = 2; game.poker.revision = 20000;
-  await assert.rejects(commandGame(game, { type: "order", pokerRevision: 0,
-    outcome: 0, side: "buy", quantity: 1, limitPrice: 0.5, orderType: "ioc" }, NOW), /poker state changed/);
+test("same-hand orders survive poker changes while old-hand orders and actions reject", async () => {
+  const game = tradeFixture(); addLiquidity(game, "sell", 32, 4);
+  const quotedRevision = game.poker.revision;
+  game.poker.revision++;
+  const bought = await commandGame(game, { type: "order", hand: 1, pokerRevision: quotedRevision,
+    outcome: 1, side: "buy", quantity: 2, limitPrice: .32, orderType: "ioc" }, NOW);
+  assert.equal(getMarketView(bought.market).positions[1].quantity, 2);
+  assert.deepEqual(bought.poker, game.poker);
+  await assert.rejects(commandGame(game, { type: "advance", pokerRevision: quotedRevision }, NOW, foldIfPossible), /table has advanced/);
+  const nextHand = structuredClone(game); nextHand.hand = 2; nextHand.poker.revision = 20000;
+  await assert.rejects(commandGame(nextHand, { type: "order", hand: 1, pokerRevision: quotedRevision,
+    outcome: 1, side: "buy", quantity: 2, limitPrice: .32, orderType: "ioc" }, NOW),
+    error => error instanceof GameError && error.code === "stale_hand");
+  // Older clients' revisions still identify their hand, never a later market.
+  await assert.rejects(commandGame(nextHand, { type: "order", pokerRevision: quotedRevision,
+    outcome: 1, side: "buy", quantity: 2, limitPrice: .32, orderType: "ioc" }, NOW), /hand/);
 });
 
-test("closed trading windows reject orders and market catch-up stops at the deadline", async () => {
-  const game = gameFixture();
-  assert.equal(viewGame(game, false, game.eventUntil).tradingOpen, false);
-  await assert.rejects(commandGame(game, { type: "order", pokerRevision: game.poker.revision,
-    outcome: 0, side: "buy", quantity: 1, limitPrice: 0.5, orderType: "ioc" }, game.eventUntil), /window is closed/);
+test("price limits protect orders from quote changes instead of rejecting poker revisions", async () => {
+  const game = tradeFixture(); addLiquidity(game, "sell", 40, 4);
+  game.poker.revision++;
+  const bought = await commandGame(game, { type: "order", hand: 1, pokerRevision: 0,
+    outcome: 1, side: "buy", quantity: 2, limitPrice: .32, orderType: "ioc" }, NOW);
+  assert.equal(getMarketView(bought.market).positions[1].quantity, 0);
+  assert.equal(getMarketView(bought.market).cash, 1000);
+  assert.match(bought.activity.at(-1)!.text, /No fill/);
+});
+
+test("running hands accept trading during decisions and beyond the synthetic quote deadline", async () => {
+  const game = tradeFixture(); addLiquidity(game, "sell", 32, 4);
+  assert.equal(viewGame(game, true, NOW).tradingOpen, true);
+  assert.equal(viewGame(game, false, game.eventUntil).tradingOpen, true);
+  const bought = await commandGame(game, { type: "order", hand: 1, pokerRevision: game.poker.revision,
+    outcome: 1, side: "buy", quantity: 1, limitPrice: .32, orderType: "ioc" }, game.eventUntil);
+  assert.equal(getMarketView(bought.market).positions[1].quantity, 1);
   catchUp(game, game.eventUntil + 3600000);
   assert.equal(game.market.tick, 45);
   const serialized = JSON.stringify(game.market);
   catchUp(game, game.eventUntil + 7200000);
-  assert.equal(JSON.stringify(game.market), serialized);
-  assert.equal(viewGame(game, true, NOW).tradingOpen, false, "busy sessions cannot accept frontend orders");
+  assert.equal(JSON.stringify(game.market), serialized, "synthetic arrivals remain bounded");
+  game.poker.street = "complete";
+  assert.equal(viewGame(game, false, NOW).tradingOpen, false);
+  await assert.rejects(commandGame(game, { type: "order", hand: 1, pokerRevision: game.poker.revision,
+    outcome: 1, side: "buy", quantity: 1, limitPrice: .32, orderType: "ioc" }, NOW), /settled/);
 });
 
 test("pause freezes synthetic fills, resting orders, and the remaining market window", async () => {
@@ -336,11 +357,11 @@ test("resume preserves the remaining window and fractional tick time without rep
   assert.deepEqual(repeatedResume, resumed, "repeated resumes cannot extend the deadline");
   const ticked = await commandGame(repeatedResume, { type: "tick" }, resumedAt + 750);
   assert.equal(ticked.market.tick, paused.market.tick + 1);
-  assert.equal(viewGame(ticked, false, resumedAt + TRADING_WINDOW_MS - 1250).tradingOpen, false);
+  assert.equal(viewGame(ticked, false, resumedAt + TRADING_WINDOW_MS - 1250).tradingOpen, true);
 
   const expired = await commandGame(original, { type: "playback", paused: true }, original.eventUntil + 1000);
   const expiredResume = await commandGame(expired, { type: "playback", paused: false }, resumedAt);
-  assert.equal(viewGame(expiredResume, false, resumedAt).tradingOpen, false, "an expired window stays closed after resume");
+  assert.equal(viewGame(expiredResume, false, resumedAt).tradingOpen, true, "human trading is open until settlement");
   assert.equal(viewGame(expiredResume, false, resumedAt).marketSecondsRemaining, 0);
 });
 
@@ -431,7 +452,7 @@ test("a tied river settles fractional main-pot shares and cannot reopen the mark
   assert.equal(settled.market.collateralUnits, 0);
   assert.equal(viewGame(settled, false, NOW).winningCards.length, 5);
   await assert.rejects(commandGame(settled, { type: "order", pokerRevision: settled.poker.revision,
-    outcome: 0, side: "buy", quantity: 1, limitPrice: 0.5, orderType: "ioc" }, NOW), /window is closed/);
+    outcome: 0, side: "buy", quantity: 1, limitPrice: 0.5, orderType: "ioc" }, NOW), /hand has settled/);
   const afterTick = await commandGame(settled, { type: "tick" }, NOW + 60000);
   assert.deepEqual(afterTick.market, settled.market);
 });
