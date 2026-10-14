@@ -27,7 +27,7 @@ export type ShowdownOdds = { equities: number[]; method: "exact" | "monte_carlo"
 export type SessionView = {
   id: string; version: number; pokerRevision: number; mode: GameMode;
   status: "playing" | "hand_complete" | "complete";
-  busy: boolean; paused: boolean; hand: number; totalHands: 5; startingBalance: 1000;
+  replayAvailable: boolean; busy: boolean; paused: boolean; hand: number; totalHands: 5; startingBalance: 1000;
   personalitiesEnabled: boolean; ranked: boolean; rankEligible: boolean; notice: string | null;
   street: "preflop" | "flop" | "turn" | "river" | "complete";
   board: string[]; players: PlayerView[]; actor: number | null;
@@ -43,4 +43,13 @@ export type SessionCommand =
   | { type: "order"; pokerRevision: number; outcome: number; side: "buy" | "sell"; quantity: number; limitPrice: number; orderType: "ioc" | "limit" }
   | { type: "cancel"; pokerRevision: number; orderId: string };
 export type CommandRequest = SessionCommand & { requestId: string };
+export type CompletedGame = {
+  id: string; mode: GameMode; ranked: boolean; pnl: number;
+  completedAt: string; replayAvailable: boolean;
+};
+export type GameHistory = { games: CompletedGame[]; nextPage: number | null };
+export type ReplayFrame = {
+  version: number; at: string; label: string; session: SessionView;
+};
+export type GameReplay = { id: string; frames: ReplayFrame[] };
 export type ApiError = { error: string; code?: string };

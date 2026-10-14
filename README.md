@@ -17,7 +17,7 @@ References: [Linear’s 2026 interface refresh](https://linear.app/now/behind-th
 - Sixteen funded traders place real limit orders into four books. Trades use price-time priority, partial fills, reserved cash/shares, and finite depth. New prices come from orders and executions, not a chart script. Human orders are bound to the observed poker revision.
 - The trader panel shows actual holdings and net filled shares for all 16 synthetic traders, plus named buyer/seller executions. Opening complete-set inventories (700 shares per outcome for makers, 240 for other traders) are distinguished from purchases. Quotes and open orders do not change holdings until matched; settlement redeems holdings.
 - Each contract pays 1 credit for the sole main-pot winner, 1/k for each of k tied main-pot winners, and 0 otherwise. Side pots do not determine contracts. Fully collateralized complete sets back every share; integer settlement units preserve thirds exactly.
-- New games advance automatically after 6 seconds (Normal) or 3 seconds (Fast), with a four-second settlement pause between hands. A single Play/Pause control manages the game and market. Entering/submitting trades and rejected orders leave playback running without resetting its countdown. Navigation, hidden tabs, and poker/model errors pause play; reopened sessions start paused. A model request already in flight completes before pausing.
+- New games advance automatically after 6 seconds (Normal) or 3 seconds (Fast), with a four-second settlement pause between hands. Normal is the default. Realtime starts the next action or hand as soon as the previous response and state save finish, without an added pause. Model response time, game calculations, networking, and persistence determine its actual speed. A single Play/Pause control manages the game and market. Entering/submitting trades and rejected orders leave playback running without resetting its countdown. Navigation, hidden tabs, and poker/model errors pause play; reopened sessions start paused. A model request already in flight completes before pausing.
 - Each poker action opens a maximum 45-second active trading window. A server-persisted pause freezes its remaining time and blocks orders, cancellations, poker actions, and synthetic fills. Play resumes the same remaining window; repeated toggles do not replenish it. Orders can rest across poker actions, and are cancelled at settlement.
 - Final PnL is settled cash minus 1,000. Live account value walks available external bids; shares lacking bids are marked at zero. Quotes are executable prices, not guaranteed probabilities.
 - Sign in with ChatGPT, choose a unique username, and opt into ranked play. The best completed score among the first three ranked starts counts each UTC week starting Monday. The three starts are shared across the separate practice/live boards. Abandoned runs consume a start. Prior weeks remain stored.
@@ -166,6 +166,16 @@ Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the 
 SIWC establishes identity only; it does not prove workspace membership. Use the Sites hosting platform's access policy controls for workspace-wide restrictions, or enforce explicit server-side membership or allowlist checks.
 
 Use SIWC for account pages, user-specific dashboards, saved records, and write actions tied to the current ChatGPT user. Leave public content anonymous.
+
+## Completed-game replays
+
+Open **Your games** to find your completed five-hand challenges, including practice/live and ranked/unranked games. **Replay** starts automatic playback immediately; pause, step backward/forward, jump to a hand, or scrub the timeline. Playback uses saved table, market, account, and trader snapshots, makes no model calls, and cannot trade or change scores. A Replay game button also appears on the final-result screen.
+
+Recordings begin with new challenges after the replay migration is installed. Games started before recording existed remain in history with replay unavailable. Guest history belongs to the current guest cookie; signed-in history belongs to the signed-in account. Replay endpoints require ownership and a completed challenge. Leaderboard replays are not exposed yet.
+
+`replay_frames` stores only public views, excluding deck order, seeds, and private model inputs. The initial deal and successful poker actions, orders, cancellations, and resting-order fills are recorded atomically with session state. Idle synthetic market ticks appear in the market chart at the next recorded action rather than adding empty playback steps. History is paginated in groups of 25.
+
+Apply the generated replay migration to the local database after building, using the command in the migration section below. Production needs the same migration before serving the new API. `node scripts/smoke-api.mjs` verifies the full recording, owner-only access, idempotent retries, and unchanged scores after playback reads.
 
 ## Local D1 migrations
 

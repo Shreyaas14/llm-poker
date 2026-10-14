@@ -68,7 +68,9 @@ svg { flex-shrink: 0; }
 .playback-options { flex-wrap: wrap; }
 .playback-toggle { min-width: 79px; }
 .playback-state { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.speed-picker select { min-height: 36px; padding: 6px 23px 6px 8px; background: transparent; border: 0; font-size: 11px; }
+.speed-picker { position: relative; display: inline-flex; align-items: center; }
+.speed-picker-arrow { position: absolute; right: 10px; pointer-events: none; color: var(--muted); }
+.speed-picker select { appearance: none; min-height: 36px; padding: 6px 32px 6px 8px; background: transparent; border: 0; font-size: 11px; }
 .primary-button, .secondary-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 40px; border-radius: 2px; padding: 10px 16px; font-size: 12px; font-weight: 500; white-space: nowrap; }
 .primary-button { background: var(--ink); color: #fff; border: 1px solid var(--ink); }
 .primary-button:hover:not(:disabled) { background: #363a36; }
