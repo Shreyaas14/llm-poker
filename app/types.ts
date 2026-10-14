@@ -27,7 +27,7 @@ export type ShowdownOdds = { equities: number[]; method: "exact" | "monte_carlo"
 export type SessionView = {
   id: string; version: number; pokerRevision: number; mode: GameMode;
   status: "playing" | "hand_complete" | "complete";
-  busy: boolean; hand: number; totalHands: 5; startingBalance: 1000;
+  busy: boolean; paused: boolean; hand: number; totalHands: 5; startingBalance: 1000;
   ranked: boolean; rankEligible: boolean; notice: string | null;
   street: "preflop" | "flop" | "turn" | "river" | "complete";
   board: string[]; players: PlayerView[]; actor: number | null;
@@ -38,6 +38,7 @@ export type SessionView = {
 export type SessionCommand =
   | { type: "advance"; pokerRevision: number }
   | { type: "next_hand"; pokerRevision: number }
+  | { type: "playback"; paused: boolean }
   | { type: "tick" }
   | { type: "order"; pokerRevision: number; outcome: number; side: "buy" | "sell"; quantity: number; limitPrice: number; orderType: "ioc" | "limit" }
   | { type: "cancel"; pokerRevision: number; orderId: string };

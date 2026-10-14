@@ -13,6 +13,8 @@ export type Game = {
   hand: number; poker: PokerState; market: MarketState; models: string[];
   results: HandResult[]; activity: Activity[]; sequence: number; version: number;
   cashBefore: number; eventUntil: number; lastTickAt: number; values: number[];
+  // Absent in running games, including sessions saved before playback controls.
+  pausedAt?: number;
   requestIds: string[]; createdAt: number; notice: string | null; providerCalls: number;
   // Optional for saved sessions created before card equity was introduced.
   odds?: ShowdownOdds; oddsKey?: string;
@@ -63,7 +65,7 @@ export function createGame(id: string, mode: GameMode, ranked: boolean, now = Da
 }
 function isPlaying(game: Game) { return game.poker.street !== "complete"; }
 export function catchUp(game: Game, now: number) {
-  if (!isPlaying(game)) return;
+  if (!isPlaying(game) || game.pausedAt !== undefined) return;
   const until = Math.min(now, game.eventUntil);
   const ticks = Math.max(0, Math.min(45, Math.floor((until - game.lastTickAt) / 1000)));
   if (ticks) {
@@ -75,6 +77,22 @@ export type LiveDecision = (observation: ReturnType<typeof getObservation>, mode
 export async function commandGame(source: Game, command: SessionCommand, now: number, chooseLive?: LiveDecision): Promise<Game> {
   const game = structuredClone(source);
   ensureOdds(game);
+  if (command.type === "playback") {
+    if (command.paused && game.pausedAt === undefined) {
+      catchUp(game, now);
+      game.pausedAt = now;
+    } else if (!command.paused && game.pausedAt !== undefined) {
+      const elapsed = Math.max(0, now - game.pausedAt);
+      game.eventUntil += elapsed;
+      game.lastTickAt += elapsed;
+      delete game.pausedAt;
+    }
+    return game;
+  }
+  if (game.pausedAt !== undefined) {
+    if (command.type === "tick") return game;
+    throw new GameError("The game is paused. Press Play to continue trading and gameplay.", 409, "GAME_PAUSED");
+  }
   catchUp(game, now);
   if (command.type === "tick") return game;
   if (command.type === "order") {
@@ -153,10 +171,12 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
   const odds = ensureOdds(game);
   const market = getMarketView(game.market);
   const ended = !isPlaying(game);
+  const paused = game.pausedAt !== undefined;
+  const marketNow = game.pausedAt ?? now;
   return {
     id: game.id, version: game.version, pokerRevision: game.poker.revision, mode: game.mode,
     status: ended ? game.hand === 5 ? "complete" : "hand_complete" : "playing",
-    busy, hand: game.hand, totalHands: 5, startingBalance: 1000,
+    busy, paused, hand: game.hand, totalHands: 5, startingBalance: 1000,
     ranked: game.ranked, rankEligible: game.rankEligible, notice: game.notice,
     street: game.poker.street, board: [...game.poker.board], actor: game.poker.actor,
     button: game.poker.button, pot: game.poker.pot,
@@ -167,7 +187,7 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
     winners: [...game.poker.mainPotWinners], winningCards: ended && game.poker.board.length === 5 ? [...new Set(game.poker.mainPotWinners.flatMap(seat => evaluateHand([...game.poker.players[seat].hole, ...game.poker.board]).cards))] : [],
     market, odds: { ...odds, equities: [...odds.equities] }, results: game.results, activity: game.activity,
     pnl: ended ? market.cash - 1000 : market.totalLiquidationValue - 1000,
-    tradingOpen: !ended && !busy && now < game.eventUntil,
-    marketSecondsRemaining: Math.max(0, Math.ceil((game.eventUntil - now) / 1000)),
+    tradingOpen: !ended && !busy && !paused && now < game.eventUntil,
+    marketSecondsRemaining: Math.max(0, Math.ceil((game.eventUntil - marketNow) / 1000)),
   };
 }

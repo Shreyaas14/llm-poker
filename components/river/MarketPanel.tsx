@@ -9,8 +9,8 @@ export function credits(value: number) { return value.toLocaleString("en-US", { 
 export function signed(value: number) { return `${value < 0 ? "−" : "+"}${credits(Math.abs(value))}`; }
 export function price(value: number | null | undefined) { return value == null ? "—" : `${Math.round(value * 100)}¢`; }
 
-export function MarketPanel({ session, bootstrap, busy, onCommand, onStart }: {
-  session: SessionView | null; bootstrap: Bootstrap | null; busy: boolean;
+export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onStart }: {
+  session: SessionView | null; bootstrap: Bootstrap | null; busy: boolean; playing: boolean;
   onCommand: (command: SessionCommand) => Promise<void>;
   onStart: (mode: GameMode, ranked: boolean) => Promise<void>;
 }) {
@@ -32,12 +32,14 @@ export function MarketPanel({ session, bootstrap, busy, onCommand, onStart }: {
   const total = Number(quantity) * (actualPrice ?? 0);
   const ended = Boolean(session && session.status !== "playing");
   const lastTrade = session?.activity.filter(a => a.kind === "trade" && a.hand === session.hand).at(-1);
-  const unavailable = !session?.tradingOpen || ended;
+  const paused = Boolean(session && (!playing || session.paused));
+  const unavailable = paused || !session?.tradingOpen || ended;
   const noQuote = orderType === "ioc" && selectedPrice == null;
   const insufficient = side === "buy" ? total > (session?.market.availableCash ?? 0) : Number(quantity) > (position?.availableQuantity ?? 0);
 
   async function submitOrder() {
     setTicketError(null);
+    if (unavailable || busy) return;
     if (!session || actualPrice == null || !Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
       setTicketError("Enter a positive whole number of shares."); return;
     }
@@ -51,7 +53,7 @@ export function MarketPanel({ session, bootstrap, busy, onCommand, onStart }: {
   return <aside className="market-aside" id="prediction-market" aria-label="Prediction market">
     <div className="section-title"><h2>Prediction market</h2><span>Play-money market</span></div>
     <section className={`market-panel ${!session ? "market-panel-intro" : ""}`}>
-      <div className="market-panel-head"><div className="market-heading-line"><h2>Who wins this hand?</h2>{session ? <span><span className={`status-dot ${session.tradingOpen ? "status-dot-live" : ""}`} />{ended ? "SETTLED" : session.tradingOpen ? `${session.marketSecondsRemaining}s OPEN` : "CLOSED"}</span> : <CircleHelp size={14} className="muted" />}</div><p>{ended ? "Main-pot contracts have settled." : "Shares settle on the main-pot winner."}</p></div>
+      <div className="market-panel-head"><div className="market-heading-line"><h2>Who wins this hand?</h2>{session ? <span><span className={`status-dot ${!paused && session.tradingOpen ? "status-dot-live" : ""}`} />{ended ? "SETTLED" : paused ? "PAUSED" : session.tradingOpen ? `${session.marketSecondsRemaining}s OPEN` : "CLOSED"}</span> : <CircleHelp size={14} className="muted" />}</div><p>{ended ? "Main-pot contracts have settled." : "Shares settle on the main-pot winner."}</p></div>
       <div className="market-columns"><span>Model</span><span>{ended ? "Payout" : "Buy"}</span><span>{ended ? "Result" : "Sell"}</span></div>
       <div className="market-outcomes" aria-label="Outcome prices">{names.map(model => {
         const rowBook = session?.market.books.find(b => b.outcome === model.seat);
@@ -69,14 +71,14 @@ export function MarketPanel({ session, bootstrap, busy, onCommand, onStart }: {
         {mode === "live" && bootstrap?.liveAvailable && !bootstrap.authenticated ? <a className="primary-button wide" href="/signin-with-chatgpt?return_to=/" target="_top">Sign in for live models <ArrowRight size={14} /></a> : <button type="button" className="primary-button wide" disabled={busy || !bootstrap || mode === "live" && !bootstrap.liveAvailable || ranked && !bootstrap.profile?.remainingAttempts} onClick={() => void onStart(mode, ranked)}>{busy ? <LoaderCircle size={14} className="loading-spinner" /> : null}{busy ? "Starting…" : mode === "live" ? "Start live challenge" : "Start practice challenge"}{!busy ? <ArrowRight size={14} /> : null}</button>}
         {!bootstrap?.authenticated ? <p className="login-hint"><a href="/signin-with-chatgpt?return_to=/" target="_top">Sign in</a> to enter the leaderboard.</p> : !bootstrap.profile ? <p className="login-hint">Choose a username in your profile to enter ranked challenges.</p> : <p className="login-hint">{ranked ? "Ranked attempts count when a challenge starts." : "Unranked. No weekly attempt used."}</p>}
 
-      </div> : ended ? <div className="trade-ticket settlement-ticket"><span className="eyebrow"><Check size={11} /> HAND {session.hand} SETTLED</span><h3>{session.results.at(-1)?.description ?? "This hand is complete."}</h3><div className="trade-details"><div><span>This hand’s PnL</span><strong className={(session.results.at(-1)?.pnl ?? 0) < 0 ? "negative" : "positive"}>{signed(session.results.at(-1)?.pnl ?? 0)} credits</strong></div><div><span>Your balance</span><strong>{credits(session.market.cash)} credits</strong></div></div><p>Winning shares have paid out. All open orders are cancelled.</p>{session.status === "hand_complete" ? <button type="button" className="primary-button wide" disabled={busy} onClick={() => void onCommand({ type: "next_hand", pokerRevision: session.pokerRevision })}>Open the next hand <ArrowRight size={13} /></button> : <p className="ticket-note">Your five-hand challenge is complete.</p>}</div> : <div className="trade-ticket">
+      </div> : ended ? <div className="trade-ticket settlement-ticket"><span className="eyebrow"><Check size={11} /> HAND {session.hand} SETTLED</span><h3>{session.results.at(-1)?.description ?? "This hand is complete."}</h3><div className="trade-details"><div><span>This hand’s PnL</span><strong className={(session.results.at(-1)?.pnl ?? 0) < 0 ? "negative" : "positive"}>{signed(session.results.at(-1)?.pnl ?? 0)} credits</strong></div><div><span>Your balance</span><strong>{credits(session.market.cash)} credits</strong></div></div><p>Winning shares have paid out. All open orders are cancelled.</p>{session.status === "hand_complete" ? <p className="ticket-note">{paused ? "Press Play to deal the next hand." : "The next hand deals automatically."}</p> : <p className="ticket-note">Your five-hand challenge is complete.</p>}</div> : <div className="trade-ticket">
         <div className="ticket-top"><h3>{selectedPlayer?.name} shares</h3><div className="trade-tabs" aria-label="Trade side"><button className={`trade-tab ${side === "buy" ? "active" : ""}`} type="button" aria-pressed={side === "buy"} onClick={() => { setSide("buy"); setTicketError(null); }}>Buy</button><button className={`trade-tab ${side === "sell" ? "active" : ""}`} type="button" aria-pressed={side === "sell"} onClick={() => { setSide("sell"); setTicketError(null); }}>Sell</button></div></div>
         <label className="field-label" htmlFor="order-type">Order type <span>{orderType === "ioc" ? "Unfilled shares cancel" : "Can carry across actions"}</span></label><select className="select-input" id="order-type" value={orderType} onChange={e => setOrderType(e.target.value as "ioc" | "limit")}><option value="ioc">Buy / sell at displayed quote</option><option value="limit">Limit order</option></select>
         <label className="field-label" htmlFor="trade-quantity">Quantity <span>{side === "buy" ? `${credits(session.market.availableCash)} credits available` : `${position?.availableQuantity ?? 0} shares available`}</span></label><div className="input-with-unit"><input className="text-input" id="trade-quantity" type="number" inputMode="numeric" min="1" max="100000" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} /><span>shares</span></div><div className="quick-amounts" aria-label="Share quantity presets">{[10, 25, 50, 100].map(q => <button type="button" key={q} onClick={() => setQuantity(String(q))}>{q}</button>)}</div>
         {orderType === "limit" ? <><label className="field-label" htmlFor="limit-price">{side === "buy" ? "Maximum buy price" : "Minimum sell price"}</label><div className="input-with-unit"><input className="text-input" id="limit-price" type="number" inputMode="numeric" min="1" max="99" step="1" value={limit} onChange={e => setLimit(e.target.value)} /><span>cents</span></div></> : null}
         <div className="trade-details"><div><span>{side === "buy" ? "Price per share" : "Minimum sale price"}</span><strong>{price(actualPrice)}</strong></div><div><span>{side === "buy" ? "Maximum cost" : "Proceeds if fully filled"}</span><strong>{credits(Number.isFinite(total) ? total : 0)} credits</strong></div>{side === "buy" ? <div><span>Payout if sole winner</span><strong>{credits(Number(quantity) || 0)} credits</strong></div> : null}</div>
         {ticketError ? <p className="ticket-error" role="alert">{ticketError}</p> : null}
-        <button type="button" className="primary-button wide" disabled={busy || unavailable || noQuote || insufficient || !Number(quantity)} onClick={() => void submitOrder()}>{busy ? <LoaderCircle size={13} className="loading-spinner" /> : null}{ended ? "Hand settled" : unavailable ? "Trading window closed" : noQuote ? "No quote available" : insufficient ? side === "buy" ? "Not enough credits" : "Not enough shares" : `${side === "buy" ? "Buy" : "Sell"} ${Number(quantity) || 0} shares`}{!busy && !unavailable && !noQuote && !insufficient ? <ArrowRight size={13} /> : null}</button>
+        <button type="button" className="primary-button wide" disabled={busy || unavailable || noQuote || insufficient || !Number(quantity)} onClick={() => void submitOrder()}>{busy ? <LoaderCircle size={13} className="loading-spinner" /> : null}{ended ? "Hand settled" : paused ? "Press Play to trade" : unavailable ? "Trading window closed" : noQuote ? "No quote available" : insufficient ? side === "buy" ? "Not enough credits" : "Not enough shares" : `${side === "buy" ? "Buy" : "Sell"} ${Number(quantity) || 0} shares`}{!busy && !unavailable && !noQuote && !insufficient ? <ArrowRight size={13} /> : null}</button>
         <p className="ticket-note">Partial fills are possible. Shares pay 1 credit to the sole main-pot winner; ties split that credit.</p>{lastTrade ? <p className="trade-feedback"><Check size={11} /><span>{lastTrade.text}</span></p> : null}
       </div>}
       <div className="market-footnote">Simulated order-book prices; equity assumes no further folds.</div>

@@ -23,6 +23,14 @@ const id=game.id, commandPath=`/api/session/${id}/command`;
 const command=body=>call(commandPath,'POST',{requestId:crypto.randomUUID(),...body});
 const inaccessible=await fetch(`${origin}/api/session/${id}`,{headers:{cookie:anonymousCookie}});assert.equal(inaccessible.status,404);
 await call(commandPath,'POST',{type:'tick',requestId:crypto.randomUUID()},403,{origin:'https://example.com'});
+game=await command({type:'playback',paused:true});
+assert.equal(game.paused,true);assert.equal(game.tradingOpen,false);
+const paused=await call(`/api/session/${id}`);assert.equal(paused.paused,true);
+await call(commandPath,'POST',{requestId:crypto.randomUUID(),type:'order',pokerRevision:game.pokerRevision,outcome:0,side:'buy',quantity:1,limitPrice:.99,orderType:'ioc'},409);
+await call(commandPath,'POST',{requestId:crypto.randomUUID(),type:'advance',pokerRevision:game.pokerRevision},409);
+const pausedTick=await command({type:'tick'});assert.deepEqual(pausedTick.market,game.market);
+assert.equal(pausedTick.marketSecondsRemaining,game.marketSecondsRemaining);
+game=await command({type:'playback',paused:false});assert.equal(game.paused,false);assert.equal(game.tradingOpen,true);
 let expectedCash=1000, count=0;const seen=new Set();
 while(game.status!=='complete') {
   if(game.status==='hand_complete') {game=await command({type:'next_hand',pokerRevision:game.pokerRevision});continue;}

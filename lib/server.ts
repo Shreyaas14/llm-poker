@@ -15,6 +15,7 @@ const commandSchema = z.intersection(z.object({requestId: uuid}), z.discriminate
   z.object({type: z.literal("advance"), pokerRevision: z.number().int().nonnegative()}),
   z.object({type: z.literal("next_hand"), pokerRevision: z.number().int().nonnegative()}),
   z.object({type: z.literal("tick")}),
+  z.object({type: z.literal("playback"), paused: z.boolean()}),
   z.object({type: z.literal("cancel"), pokerRevision:z.number().int().nonnegative(), orderId: z.string().min(1).max(100)}),
   z.object({type: z.literal("order"), pokerRevision:z.number().int().nonnegative(), outcome: z.number().int().min(0).max(3), side: z.enum(["buy","sell"]), quantity: z.number().int().min(1).max(100000), limitPrice: z.number().min(.01).max(.99), orderType: z.enum(["ioc","limit"])}),
 ]));
@@ -125,6 +126,9 @@ export async function executeCommand(who: Identity,id: string,body: unknown) {
     .bind(token,now+55000,id,who.id,row.version,now).run();
   if (!acquired.meta.changes) throw new GameError("Another action is finishing. Try again in a moment.",409,"busy");
   try {
+    if(original.pausedAt!==undefined && command.type!=="playback" && command.type!=="tick") {
+      throw new GameError("The game is paused. Press Play to continue trading and gameplay.",409,"GAME_PAUSED");
+    }
     // Reserve both possible API attempts durably, including failed requests.
     if(original.mode==="live" && command.type==="advance") {
       if(!liveReady()) throw new GameError("Live model access is awaiting activation. You can end this run and play practice.",503,"provider_unavailable");

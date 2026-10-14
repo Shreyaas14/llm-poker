@@ -46,6 +46,7 @@ test("new game starts with four real seats, five-hand target, and a private futu
     assert.equal(player.className, style.name); assert.equal(player.description, style.description);
   }
   assert.equal(view.tradingOpen, true);
+  assert.equal(view.paused, false);
   assert.equal(view.odds.method, "monte_carlo"); assert.equal(view.odds.samples, 4096);
   assert.ok(Math.abs(view.odds.equities.reduce((sum, value) => sum + value, 0) - 1) < 1e-12);
   for (const field of ["deck", "seed", "rngState", "beliefs", "accounts"]) assert.ok(!JSON.stringify(view).includes(`"${field}"`));
@@ -183,6 +184,84 @@ test("closed trading windows reject orders and market catch-up stops at the dead
   catchUp(game, game.eventUntil + 7200000);
   assert.equal(JSON.stringify(game.market), serialized);
   assert.equal(viewGame(game, true, NOW).tradingOpen, false, "busy sessions cannot accept frontend orders");
+});
+
+test("pause freezes synthetic fills, resting orders, and the remaining market window", async () => {
+  let game = gameFixture();
+  game = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
+    outcome: 0, side: "buy", quantity: 10, limitPrice: 0.01, orderType: "limit" }, NOW);
+  assert.equal(getMarketView(game.market).openOrders.length, 1);
+  const paused = await commandGame(game, { type: "playback", paused: true }, NOW + 1250);
+  assert.equal(paused.market.tick, 1, "the market catches up to the moment of pause");
+  assert.equal(paused.pausedAt, NOW + 1250);
+  assert.equal(viewGame(paused, false, NOW + 3600000).paused, true);
+  assert.equal(viewGame(paused, false, NOW + 3600000).tradingOpen, false);
+  assert.equal(viewGame(paused, false, NOW + 3600000).marketSecondsRemaining, 44);
+  const ticked = await commandGame(paused, { type: "tick" }, NOW + 3600000);
+  assert.deepEqual(ticked, paused, "ticks cannot move prices, fill orders, or change positions while paused");
+  catchUp(ticked, NOW + 7200000);
+  assert.deepEqual(ticked, paused, "direct market catch-up also honors the pause");
+});
+
+test("paused games reject all trading and poker actions before requesting a model", async () => {
+  const paused = await commandGame(gameFixture(), { type: "playback", paused: true }, NOW);
+  const before = JSON.stringify(paused);
+  let modelCalls = 0;
+  const chooseLive: LiveDecision = async () => { modelCalls++; return { type: "fold" }; };
+  const commands = [
+    { type: "order", pokerRevision: paused.poker.revision, outcome: 0, side: "buy", quantity: 1, limitPrice: 0.99, orderType: "ioc" },
+    { type: "cancel", pokerRevision: paused.poker.revision, orderId: "some-order" },
+    { type: "advance", pokerRevision: paused.poker.revision },
+    { type: "next_hand", pokerRevision: paused.poker.revision },
+  ] as const;
+  for (const command of commands) {
+    await assert.rejects(commandGame(paused, command, NOW + 60000, chooseLive),
+      error => error instanceof GameError && error.status === 409 && error.code === "GAME_PAUSED");
+  }
+  assert.equal(modelCalls, 0);
+  assert.equal(JSON.stringify(paused), before);
+});
+
+test("resume preserves the remaining window and fractional tick time without replenishing either", async () => {
+  const original = gameFixture();
+  assert.equal(original.pausedAt, undefined, "legacy saved sessions default to running");
+  assert.equal(viewGame(original, false, NOW).paused, false);
+  const paused = await commandGame(original, { type: "playback", paused: true }, NOW + 1250);
+  const repeatedPause = await commandGame(paused, { type: "playback", paused: true }, NOW + 60000);
+  assert.deepEqual(repeatedPause, paused, "repeated pauses cannot change the freeze time");
+  const resumedAt = NOW + 3600000;
+  const resumed = await commandGame(repeatedPause, { type: "playback", paused: false }, resumedAt);
+  assert.equal(resumed.pausedAt, undefined);
+  assert.equal(resumed.eventUntil - resumedAt, TRADING_WINDOW_MS - 1250);
+  assert.equal(resumed.lastTickAt, resumedAt - 250);
+  assert.equal(viewGame(resumed, false, resumedAt).tradingOpen, true);
+  assert.deepEqual(resumed.market, paused.market, "resuming does not simulate the time spent paused");
+  const repeatedResume = await commandGame(resumed, { type: "playback", paused: false }, resumedAt + 500);
+  assert.deepEqual(repeatedResume, resumed, "repeated resumes cannot extend the deadline");
+  const ticked = await commandGame(repeatedResume, { type: "tick" }, resumedAt + 750);
+  assert.equal(ticked.market.tick, paused.market.tick + 1);
+  assert.equal(viewGame(ticked, false, resumedAt + TRADING_WINDOW_MS - 1250).tradingOpen, false);
+
+  const expired = await commandGame(original, { type: "playback", paused: true }, original.eventUntil + 1000);
+  const expiredResume = await commandGame(expired, { type: "playback", paused: false }, resumedAt);
+  assert.equal(viewGame(expiredResume, false, resumedAt).tradingOpen, false, "an expired window stays closed after resume");
+  assert.equal(viewGame(expiredResume, false, resumedAt).marketSecondsRemaining, 0);
+});
+
+test("pausing between hands prevents dealing until play resumes", async () => {
+  let game = gameFixture();
+  while (game.poker.street !== "complete") {
+    game = await commandGame(game, { type: "advance", pokerRevision: game.poker.revision }, NOW, foldIfPossible);
+  }
+  game = await commandGame(game, { type: "playback", paused: true }, NOW);
+  assert.equal(viewGame(game, false, NOW).status, "hand_complete");
+  assert.equal(viewGame(game, false, NOW).paused, true);
+  await assert.rejects(commandGame(game, { type: "next_hand", pokerRevision: game.poker.revision }, NOW + 1000),
+    error => error instanceof GameError && error.code === "GAME_PAUSED");
+  game = await commandGame(game, { type: "playback", paused: false }, NOW + 1000);
+  game = await commandGame(game, { type: "next_hand", pokerRevision: game.poker.revision }, NOW + 1000);
+  assert.equal(game.hand, 2);
+  assert.equal(viewGame(game, false, NOW + 1000).tradingOpen, true);
 });
 
 test("a poker advance publishes its event without giving informed traders an extra tick", async t => {

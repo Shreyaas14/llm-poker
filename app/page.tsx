@@ -31,18 +31,24 @@ export default function Home() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [autoPlay, setAutoPlay] = useState(false);
+  const [playbackChanging, setPlaybackChanging] = useState(false);
   const [pace, setPace] = useState<3 | 6>(6);
   const [countdown, setCountdown] = useState(6);
   const sessionRef = useRef<SessionView | null>(null);
   const commandQueue = useRef<Promise<void>>(Promise.resolve());
   const commandCount = useRef(0);
   const mounted = useRef(true);
+  const playbackIntent = useRef(false);
+  const playbackRequest = useRef<boolean | null>(null);
 
   const acceptSession = useCallback((next: SessionView) => {
     const previous = sessionRef.current;
     if (previous?.id === next.id && previous.version > next.version) return;
     sessionRef.current = next;
-    if (mounted.current) setSession(next);
+    if (mounted.current) {
+      setSession(next);
+      if (next.paused) setAutoPlay(false);
+    }
   }, []);
 
   const loadBootstrap = useCallback(async () => {
@@ -55,7 +61,11 @@ export default function Home() {
     try {
       const data = await loadBootstrap();
       if (data.activeSessionId) {
-        const resumed = await request<SessionView>(`/api/session/${data.activeSessionId}`);
+        let resumed = await request<SessionView>(`/api/session/${data.activeSessionId}`);
+        acceptSession(resumed);
+        if (resumed.status !== "complete" && !resumed.paused) {
+          resumed = await request<SessionView>(`/api/session/${resumed.id}/command`, { method: "POST", body: JSON.stringify({ type: "playback", paused: true, requestId: crypto.randomUUID() }) });
+        }
         acceptSession(resumed);
       }
     } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : "The table could not be loaded."); }
@@ -81,15 +91,23 @@ export default function Home() {
         const next = await request<SessionView>(`/api/session/${current.id}/command`, { method: "POST", body: JSON.stringify({ ...command, requestId: crypto.randomUUID() }) });
         if (sessionRef.current?.id !== current.id) return;
         acceptSession(next);
+        if (command.type === "playback") setAutoPlay(!next.paused && playbackIntent.current);
         if (!background) {
           const latest = next.activity.at(-1);
-          setAnnouncement(command.type === "order" ? latest?.text ?? "Order submitted. Check your positions and open orders." : command.type === "cancel" ? "Order cancelled." : latest?.text ?? "The table has advanced.");
+          setAnnouncement(command.type === "playback" ? next.paused ? "Game and market paused. Trading is disabled." : "Game and trading resumed." : command.type === "order" ? latest?.text ?? "Order submitted. Check your positions and open orders." : command.type === "cancel" ? "Order cancelled." : latest?.text ?? "The table has advanced.");
         }
         if (next.status === "complete" && current.status !== "complete") void loadBootstrap().catch(() => {});
       } catch (e) {
         if (!background && mounted.current) {
-          setAutoPlay(false);
           setError(e instanceof Error ? e.message : "That action did not complete.");
+          if (command.type === "advance" || command.type === "next_hand") {
+            playbackIntent.current = false;
+            setAutoPlay(false);
+            try {
+              const paused = await request<SessionView>(`/api/session/${current.id}/command`, { method: "POST", body: JSON.stringify({ type: "playback", paused: true, requestId: crypto.randomUUID() }) });
+              if (sessionRef.current?.id === current.id) acceptSession(paused);
+            } catch { /* The local pause still blocks trading and further automatic requests. */ }
+          }
         }
       } finally {
         commandCount.current--;
@@ -101,52 +119,64 @@ export default function Home() {
     await action;
   }, [acceptSession, loadBootstrap]);
 
+  const changePlayback = useCallback(async (paused: boolean) => {
+    const current = sessionRef.current;
+    if (!current || current.status === "complete") return;
+    playbackIntent.current = !paused;
+    if (paused) setAutoPlay(false);
+    if (playbackRequest.current === paused) return;
+    playbackRequest.current = paused;
+    setPlaybackChanging(true);
+    await runCommand({ type: "playback", paused });
+    if (playbackRequest.current === paused) {
+      playbackRequest.current = null;
+      setPlaybackChanging(false);
+    }
+  }, [runCommand]);
+
   const activeId = session?.id;
   const isPlaying = session?.status === "playing";
   useEffect(() => {
-    if (!activeId || !isPlaying) return;
+    if (!activeId || !isPlaying || !autoPlay) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void runCommand({ type: "tick" });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [activeId, isPlaying, runCommand]);
+  }, [activeId, isPlaying, autoPlay, runCommand]);
 
   const pokerRevision = session?.pokerRevision;
   const gameStatus = session?.status;
   useEffect(() => {
-    if (!activeId || !autoPlay || busy || error || tab !== "table" || profileOpen || confirmEnd || gameStatus === "complete") return;
+    if (!activeId || !autoPlay || tab !== "table" || profileOpen || confirmEnd || gameStatus === "complete") return;
     const delay = gameStatus === "hand_complete" ? 4 : pace;
-    let due = Date.now() + delay * 1000;
+    setCountdown(delay);
+    const due = Date.now() + delay * 1000;
     const timer = window.setInterval(() => {
-      if (document.visibilityState !== "visible") { setAutoPlay(false); return; }
+      if (document.visibilityState !== "visible") { void changePlayback(true); return; }
       const current = sessionRef.current;
-      if (!current || current.busy) { due = Date.now() + delay * 1000; return; }
+      if (!current || current.paused || !playbackIntent.current) return;
       const remaining = Math.max(0, Math.ceil((due - Date.now()) / 1000));
       setCountdown(remaining);
-      if (remaining === 0 && commandCount.current === 0) {
+      if (remaining === 0 && commandCount.current === 0 && !current.busy) {
         window.clearInterval(timer);
         void runCommand({ type: current.status === "hand_complete" ? "next_hand" : "advance", pokerRevision: current.pokerRevision });
       }
     }, 200);
     return () => window.clearInterval(timer);
-  }, [activeId, pokerRevision, gameStatus, autoPlay, pace, busy, error, tab, profileOpen, confirmEnd, runCommand]);
+  }, [activeId, pokerRevision, gameStatus, autoPlay, pace, tab, profileOpen, confirmEnd, runCommand, changePlayback]);
 
   useEffect(() => {
-    const pauseWhenHidden = () => { if (document.visibilityState !== "visible") setAutoPlay(false); };
+    const pauseWhenHidden = () => { if (document.visibilityState !== "visible") void changePlayback(true); };
     document.addEventListener("visibilitychange", pauseWhenHidden);
     return () => document.removeEventListener("visibilitychange", pauseWhenHidden);
-  }, []);
-
-  function pauseForOrder(event: React.SyntheticEvent<HTMLElement>) {
-    if (event.target instanceof Element && event.target.closest(".trade-ticket")) setAutoPlay(false);
-  }
+  }, [changePlayback]);
 
   async function startGame(mode: GameMode, ranked: boolean) {
     setBusy(true); setError(null);
     try {
       await commandQueue.current;
       const next = await request<SessionView>("/api/session", { method: "POST", body: JSON.stringify({ mode, ranked, requestId: crypto.randomUUID() }) });
-      acceptSession(next); setTab("table"); setAutoPlay(true); setCountdown(pace); setAnnouncement("Challenge started. Automatic play is on. Pause to trade at your own pace.");
+      acceptSession(next); setTab("table"); playbackIntent.current = !next.paused; setAutoPlay(!next.paused); setCountdown(pace); setAnnouncement(next.paused ? "Challenge restored. Press Play to resume." : "Challenge started. The game and market are live.");
       void loadBootstrap().catch(() => {});
     } catch (e) { setError(e instanceof Error ? e.message : "Could not start your challenge."); }
     finally { setBusy(false); }
@@ -163,7 +193,7 @@ export default function Home() {
 
   async function endRun() {
     if (!session) return;
-    setAutoPlay(false); setBusy(true); setError(null);
+    playbackIntent.current = false; setAutoPlay(false); setBusy(true); setError(null);
     try {
       await commandQueue.current;
       await request<{ ok: true }>(`/api/session/${session.id}`, { method: "DELETE", body: "{}" });
@@ -174,22 +204,23 @@ export default function Home() {
     finally { setBusy(false); }
   }
 
-  function newChallenge() { setAutoPlay(false); sessionRef.current = null; setSession(null); setAnnouncement(""); setTab("table"); }
-  function showRules() { setAutoPlay(false); setRulesOpen(true); window.setTimeout(() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 0); }
+  function newChallenge() { playbackIntent.current = false; setAutoPlay(false); sessionRef.current = null; setSession(null); setAnnouncement(""); setTab("table"); }
+  function showRules() { void changePlayback(true); setRulesOpen(true); window.setTimeout(() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 0); }
 
   const seats: TableSeat[] = session ? session.players.map(p => ({ id: String(p.seat), name: p.name, cards: p.cards, stack: p.stack, action: p.allIn ? "All-in" : p.lastAction || "Waiting", folded: p.folded, active: session.actor === p.seat && session.status === "playing", dealer: p.seat === session.button, winner: session.winners.includes(p.seat), allIn: p.allIn, classId: p.classId, className: p.className, description: p.description })) : bootstrap?.models?.length ? bootstrap.models.map(m => ({ ...MODEL_SEATS[m.seat], id: String(m.seat), name: m.name })) : MODEL_SEATS;
   const latestPokerAction = session?.activity.filter(a => a.kind === "poker" && a.hand === session.hand).at(-1);
   const isComplete = session?.status === "complete";
   const thinking = advancing || Boolean(session?.busy);
   const isHandComplete = session?.status === "hand_complete";
+  const pauseUnconfirmed = Boolean(session && !isComplete && !autoPlay && !session.paused && !playbackChanging);
   const positions = session?.market.positions.filter(p => p.quantity > 0) ?? [];
   const leaderboard = boardMode === "live" ? bootstrap?.leaderboard ?? [] : bootstrap?.practiceLeaderboard ?? [];
   const pnl = session?.pnl ?? 0;
-  const rules = <details className="rules-details" id="how-it-works" open={rulesOpen} onToggle={e => setRulesOpen(e.currentTarget.open)}><summary>How VESPER works</summary><div className="rules-content"><p><strong>The challenge:</strong> begin with 1,000 play-money credits and trade across five poker hands. You are a spectator and a trader; the four models are the poker players. Each new hand starts a new outcome market, and your credits carry forward.</p><p><strong>Your information:</strong> every dealt hole card is visible to you. The models only receive their own cards and the public table. Future community cards stay hidden until dealt. Each new challenge shuffles four playing classes across the models: Analyst, Challenger, Sentinel, and Wildcard. Classes stay assigned for all five hands. Hover, focus, or tap a class for its style; these are tendencies, so any model can still bluff or fold.</p><p><strong>The market:</strong> 16 synthetic traders place funded bids and asks and take actual positions when orders match. The trader panel shows holdings, net shares bought or sold, and recent executions. Makers begin each hand with 700 shares of every outcome; other traders begin with 240. These collateral-backed opening inventories are separate from their trades. A changed quote alone does not change anyone’s position; a fill does. At settlement, shares are redeemed and holdings return to zero. You can buy available shares at the shown ask, sell shares you own at the shown bid, or place a limit order. Orders can fill partly, and prices can change. Automatic play advances after 6 seconds, or 3 seconds at Fast speed. Pause or interact with the trade ticket to stop automatic play; the current trading window still closes after 45 seconds. Resume or use Next action to continue. Switching away from this tab pauses automatic play. Unfilled immediate orders cancel; resting limit orders can carry across actions until filled, cancelled, or the hand settles.</p><p><strong>Settlement:</strong> a share in the sole main-pot winner pays 1 credit. If the main pot is tied, the winners split that credit equally. All other shares pay zero. Side-pot winners do not determine the contract. Outstanding orders cancel when the hand settles.</p><p><strong>Scoring:</strong> final PnL is your credits after five hands minus the starting 1,000. During play, account value uses available bids, so shares without buyers are conservatively marked at zero. Practice and live models have separate weekly leaderboards. Your best completed score from your first three ranked starts each week counts. Practice and live share that three-start allowance. An unfinished or abandoned ranked start still uses an attempt. Ranked challenges require sign-in and a username.</p><p><strong>Practice versus live:</strong> practice uses local decision models with distinct playing styles. Live mode calls the actual GPT, Claude, Gemini, and Grok providers when connected. This is a play-money game, with no deposits, withdrawals, or prizes.</p></div></details>;
+  const rules = <details className="rules-details" id="how-it-works" open={rulesOpen} onToggle={e => setRulesOpen(e.currentTarget.open)}><summary>How VESPER works</summary><div className="rules-content"><p><strong>The challenge:</strong> begin with 1,000 play-money credits and trade across five poker hands. You are a spectator and a trader; the four models are the poker players. Each new hand starts a new outcome market, and your credits carry forward.</p><p><strong>Your information:</strong> every dealt hole card is visible to you. The models only receive their own cards and the public table. Future community cards stay hidden until dealt. Each new challenge shuffles four playing classes across the models: Analyst, Challenger, Sentinel, and Wildcard. Classes stay assigned for all five hands. Hover, focus, or tap a class for its style; these are tendencies, so any model can still bluff or fold.</p><p><strong>The market:</strong> 16 synthetic traders place funded bids and asks and take actual positions when orders match. The trader panel shows holdings, net shares bought or sold, and recent executions. Makers begin each hand with 700 shares of every outcome; other traders begin with 240. These collateral-backed opening inventories are separate from their trades. A changed quote alone does not change anyone’s position; a fill does. At settlement, shares are redeemed and holdings return to zero. You can buy available shares at the shown ask, sell shares you own at the shown bid, or place a limit order. Orders can fill partly, and prices can change. Play advances the game automatically after 6 seconds, or 3 seconds at Fast speed. Entering and submitting orders keeps the game running. Pause freezes the game and market: no orders, cancellations, or synthetic fills occur until Play resumes them. Switching away from this tab also pauses play. Each action allows up to 45 seconds of active trading time. Unfilled immediate orders cancel; resting limit orders can carry across actions until filled, cancelled, or the hand settles.</p><p><strong>Settlement:</strong> a share in the sole main-pot winner pays 1 credit. If the main pot is tied, the winners split that credit equally. All other shares pay zero. Side-pot winners do not determine the contract. Outstanding orders cancel when the hand settles.</p><p><strong>Scoring:</strong> final PnL is your credits after five hands minus the starting 1,000. During play, account value uses available bids, so shares without buyers are conservatively marked at zero. Practice and live models have separate weekly leaderboards. Your best completed score from your first three ranked starts each week counts. Practice and live share that three-start allowance. An unfinished or abandoned ranked start still uses an attempt. Ranked challenges require sign-in and a username.</p><p><strong>Practice versus live:</strong> practice uses local decision models with distinct playing styles. Live mode calls the actual GPT, Claude, Gemini, and Grok providers when connected. This is a play-money game, with no deposits, withdrawals, or prizes.</p></div></details>;
 
   return <div className="app-shell">
     <a className="skip-link" href="#main">Skip to game</a>
-    <header className="site-header"><Link className="brand" href="/" aria-label="VESPER home"><span className="brand-symbol" aria-hidden="true">♠</span>VESPER</Link><nav className="header-nav" aria-label="Main navigation"><button className={`nav-link ${tab === "table" ? "active" : ""}`} type="button" onClick={() => setTab("table")}>The table</button><button className={`nav-link ${tab === "leaderboard" ? "active" : ""}`} type="button" onClick={() => { setAutoPlay(false); setTab("leaderboard"); }}>Leaderboard</button></nav>{bootstrap?.authenticated ? <button className="user-button" type="button" onClick={() => { setAutoPlay(false); setProfileOpen(!profileOpen); }} aria-expanded={profileOpen} aria-label="Open your profile"><span className="avatar-dot">{(bootstrap.profile?.username ?? "You").slice(0, 1).toUpperCase()}</span>{bootstrap.profile?.username ?? "Your profile"}<ChevronRight size={11} /></button> : <a className="user-button" href="/signin-with-chatgpt?return_to=/" target="_top" aria-label="Sign in with ChatGPT"><span className="avatar-dot"><UserRound size={11} /></span>Sign in<LogIn size={11} /></a>}</header>
+    <header className="site-header"><Link className="brand" href="/" aria-label="VESPER home"><span className="brand-symbol" aria-hidden="true">♠</span>VESPER</Link><nav className="header-nav" aria-label="Main navigation"><button className={`nav-link ${tab === "table" ? "active" : ""}`} type="button" onClick={() => setTab("table")}>The table</button><button className={`nav-link ${tab === "leaderboard" ? "active" : ""}`} type="button" onClick={() => { void changePlayback(true); setTab("leaderboard"); }}>Leaderboard</button></nav>{bootstrap?.authenticated ? <button className="user-button" type="button" onClick={() => { void changePlayback(true); setProfileOpen(!profileOpen); }} aria-expanded={profileOpen} aria-label="Open your profile"><span className="avatar-dot">{(bootstrap.profile?.username ?? "You").slice(0, 1).toUpperCase()}</span>{bootstrap.profile?.username ?? "Your profile"}<ChevronRight size={11} /></button> : <a className="user-button" href="/signin-with-chatgpt?return_to=/" target="_top" aria-label="Sign in with ChatGPT"><span className="avatar-dot"><UserRound size={11} /></span>Sign in<LogIn size={11} /></a>}</header>
     <main id="main">
       <div className="game-toolbar"><h1 className="sr-only">Poker prediction market</h1><div className="game-toolbar-actions"><span className="mode-badge"><ShieldCheck size={11} /> Play-money only</span><button className="text-button" type="button" onClick={showRules}>How to play <CircleHelp size={13} /></button></div></div>
       {error ? <div className="error-banner" role="alert"><Info size={15} /><span>{error}{!bootstrap && !loading ? <button type="button" className="text-button" onClick={() => { setLoading(true); setError(null); void initialize(); }}>Retry connection <RotateCcw size={11} /></button> : null}</span><button type="button" aria-label="Dismiss error" onClick={() => setError(null)}><X size={14} /></button></div> : null}
@@ -200,14 +231,14 @@ export default function Home() {
         <section className="stats-strip" aria-label="Challenge account"><div className="stat-block"><span className="stat-label">Available credits</span><div className="stat-value">{credits(session?.market.availableCash ?? 1000)}<small>CR</small></div></div><div className="stat-block"><span className="stat-label">Account value</span><div className="stat-value">{credits(session?.market.totalLiquidationValue ?? 1000)}<small>CR</small></div></div><div className="stat-block"><span className="stat-label">Total PnL</span><div className={`stat-value ${pnl < 0 ? "negative" : "positive"}`}>{signed(pnl)}<small>CR</small></div></div><div className="stat-block"><span className="stat-label">Your challenge</span><div className="hand-progress-top"><span>{session ? `Hand ${session.hand} of 5` : "Five hands"}</span><span>{session ? session.ranked ? "Ranked" : "Unranked" : "Not started"}</span></div><div className="hand-steps" aria-hidden="true">{[1, 2, 3, 4, 5].map(hand => <span className={`hand-step ${session && (session.hand > hand || session.status !== "playing" && session.hand === hand) ? "done" : session?.hand === hand ? "current" : ""}`} key={hand} />)}</div></div></section>
         {confirmEnd ? <section className="end-run-panel" aria-label="Confirm ending this run"><div><strong>End this challenge?</strong><p>Your unfinished score won’t enter the leaderboard.{session?.ranked ? " This ranked attempt will still count." : " You can start fresh in either mode."}</p></div><div><button type="button" className="secondary-button" disabled={busy} onClick={() => setConfirmEnd(false)}>Keep playing</button><button type="button" className="primary-button" disabled={busy} onClick={() => void endRun()}>End run</button></div></section> : null}
         {isComplete ? <section className="settlement-panel"><span className="eyebrow"><Trophy size={12} /> FINAL RESULT</span><h2>Five hands complete</h2><div className={`settlement-value ${pnl < 0 ? "negative" : "positive"}`}>{signed(pnl)} <small style={{ fontSize: 12, color: "#777a9b" }}>credits</small></div><p>{session?.ranked && session.rankEligible ? "Your completed score is on this week’s leaderboard." : "Unranked challenge complete. Sign in and enter a ranked challenge to join the weekly standings."}</p><div className="result-rows">{session?.results.map(result => <div className="result-hand" key={result.hand}><small>HAND {result.hand}</small><span className={result.pnl < 0 ? "negative" : "positive"}>{signed(result.pnl)}</span></div>)}</div><button type="button" className="primary-button" style={{ marginTop: 19 }} onClick={newChallenge}>Play another challenge <ArrowRight size={13} /></button></section> : null}
-        <a className="mobile-market-jump" href="#prediction-market">{!session ? "Set up your challenge" : session.status !== "playing" ? "View this hand’s result" : "Trade this hand"}<ArrowDownRight size={13} /></a><div className="game-layout"><div className="game-main"><div className="section-title"><h2 className="title-with-icon">The table <span className="muted">/</span> <span>{session ? session.mode === "live" ? "Live AI providers" : "Practice decision models" : "Four players"}</span></h2>{session ? <div className="table-section-actions"><span className="numeric">{session.street === "complete" ? "Showdown" : session.street.charAt(0).toUpperCase() + session.street.slice(1)}</span>{!isComplete ? <button type="button" onClick={() => { setAutoPlay(false); setConfirmEnd(true); }} disabled={busy}>End run</button> : null}</div> : <span>01 — 05</span>}</div>
+        <a className="mobile-market-jump" href="#prediction-market">{!session ? "Set up your challenge" : session.status !== "playing" ? "View this hand’s result" : "Trade this hand"}<ArrowDownRight size={13} /></a><div className="game-layout"><div className="game-main"><div className="section-title"><h2 className="title-with-icon">The table <span className="muted">/</span> <span>{session ? session.mode === "live" ? "Live AI providers" : "Practice decision models" : "Four players"}</span></h2>{session ? <div className="table-section-actions"><span className="numeric">{session.street === "complete" ? "Showdown" : session.street.charAt(0).toUpperCase() + session.street.slice(1)}</span>{!isComplete ? <button type="button" onClick={() => { void changePlayback(true); setConfirmEnd(true); }} disabled={busy}>End run</button> : null}</div> : <span>01 — 05</span>}</div>
           <PokerTable seats={seats} board={session?.board ?? []} pot={session?.pot ?? 0} winningCards={session?.winningCards ?? []} street={session?.street ?? "preflop"} started={Boolean(session)} busy={thinking} settled={Boolean(session && session.status !== "playing")} />
-          <div className="table-controls"><div className="event-summary-wrap"><span className="event-icon">{isHandComplete || isComplete ? <Check size={14} /> : <CirclePause size={14} />}</span><div className="event-summary"><strong>{loading ? "Connecting to the table…" : !session ? "Ready to deal." : isComplete ? "Five hands complete." : isHandComplete ? session.results.at(-1)?.description ?? "This hand has settled." : latestPokerAction?.text ?? "Cards dealt. Trading is open."}</strong><p>{!session ? "Start a challenge to deal the first hand." : isComplete ? "Final score settled." : isHandComplete ? `Hand PnL: ${signed(session.results.at(-1)?.pnl ?? 0)} credits. Outstanding orders are closed.` : session.tradingOpen ? autoPlay ? "Trading open. Order entry pauses play." : "Paused. Trade, resume, or advance manually." : "The trading window ended. Continue to the next action."}</p></div></div>{session && !isComplete ? <div className="playback-controls" aria-label="Playback controls"><div className="playback-options"><button type="button" className={`secondary-button playback-toggle ${autoPlay ? "is-playing" : ""}`} aria-pressed={autoPlay} onClick={() => { setAutoPlay(!autoPlay); setCountdown(isHandComplete ? 4 : pace); }} disabled={Boolean(error) || confirmEnd}>{autoPlay ? <Pause size={13} /> : <Play size={13} />}{autoPlay ? "Pause" : "Play"}</button><label className="speed-picker"><span className="sr-only">Playback speed</span><select aria-label="Playback speed" value={pace} onChange={e => { setPace(Number(e.target.value) as 3 | 6); setCountdown(Number(e.target.value)); }}><option value={6}>Normal · 6s</option><option value={3}>Fast · 3s</option></select></label><span className="playback-state" aria-live="off">{thinking ? `${session.players.find(p => p.seat === session.actor)?.name ?? "Model"} deciding…` : autoPlay ? `${isHandComplete ? "Next hand" : "Next action"} in ${countdown}s` : "Paused"}</span></div><button type="button" className="primary-button" disabled={busy || session.busy} onClick={() => void runCommand({ type: isHandComplete ? "next_hand" : "advance", pokerRevision: session.pokerRevision })}>{thinking ? <LoaderCircle size={13} className="loading-spinner" /> : null}{thinking ? "Thinking…" : isHandComplete ? `Deal hand ${session.hand + 1}` : "Next action"}{!thinking ? <ArrowRight size={13} /> : null}</button></div> : <button type="button" className="text-button" onClick={showRules}>The rules <ArrowDownRight size={13} /></button>}</div>
-          <MarketAnalytics session={session} /><div className="lower-layout"><section className="small-panel"><div className="section-title"><h2>Your positions</h2><span>{positions.length} open</span></div>{positions.length ? positions.map(position => <div className="position-row" key={position.outcome}><div><strong>{session?.players.find(p => p.seat === position.outcome)?.name}</strong><small>{position.quantity} shares · avg {price(position.averageCost)}{position.unliquidatedQuantity > 0 ? ` · ${position.unliquidatedQuantity} without bids` : ""}</small></div><div><strong className={position.unrealizedPnl < 0 ? "negative" : "positive"}>{signed(position.unrealizedPnl)}</strong><small>{credits(position.liquidationValue)} value</small></div></div>) : <div className="empty-state">No positions.<p>Filled orders appear here.</p></div>}{session?.market.openOrders.length ? <><div className="section-title" style={{ marginTop: 14 }}><h2>Open orders</h2><span>{session.market.openOrders.length}</span></div>{session.market.openOrders.map(order => <div className="order-row" key={order.id}><span>{order.side === "buy" ? "Buy" : "Sell"} {order.remainingQuantity} {session.players.find(p => p.seat === order.outcome)?.name} at {price(order.limitPrice)}</span><button type="button" className="cancel-button" aria-label={`Cancel order to ${order.side} ${order.remainingQuantity} shares`} disabled={busy} onClick={() => void runCommand({ type: "cancel", pokerRevision: session.pokerRevision, orderId: order.id })}>Cancel</button></div>)}</> : null}</section><section className="small-panel"><div className="section-title"><h2>Table activity</h2><span>{session ? `Hand ${session.hand}` : "Recent actions"}</span></div>{session?.activity.length ? <div className="activity-list">{session.activity.slice(-10).reverse().map((activity, i) => <div className="activity-row" key={activity.id}><span className="activity-index">{String(session.activity.length - i).padStart(2, "0")}</span><div>{activity.text}<small>{activity.kind === "trade" ? "Your trade" : activity.kind === "system" ? "Table update" : `Hand ${activity.hand}`}</small></div></div>)}</div> : <div className="empty-state">No activity yet.<p>Poker actions and trades appear here.</p></div>}</section></div><TraderActivity session={session} />
-        </div><div className="market-column" onFocusCapture={pauseForOrder} onPointerDownCapture={pauseForOrder}><MarketPanel session={session} bootstrap={bootstrap} busy={busy || loading} onCommand={runCommand} onStart={startGame} /></div></div>
+          <div className="table-controls"><div className="event-summary-wrap"><span className="event-icon">{isHandComplete || isComplete ? <Check size={14} /> : <CirclePause size={14} />}</span><div className="event-summary"><strong>{loading ? "Connecting to the table…" : !session ? "Ready to deal." : isComplete ? "Five hands complete." : isHandComplete ? session.results.at(-1)?.description ?? "This hand has settled." : latestPokerAction?.text ?? "Cards dealt. Trading is open."}</strong><p>{!session ? "Start a challenge to deal the first hand." : isComplete ? "Final score settled." : isHandComplete ? `Hand PnL: ${signed(session.results.at(-1)?.pnl ?? 0)} credits. Outstanding orders are closed.` : !autoPlay ? pauseUnconfirmed ? "Pause not confirmed. Retry to freeze the market." : "Paused. Press Play to resume the game and trading." : session.tradingOpen ? "Trading open. The game continues while you trade." : "Trading reopens after the next action."}</p></div></div>{session && !isComplete ? <div className="playback-controls" aria-label="Playback controls"><div className="playback-options"><button type="button" className={`secondary-button playback-toggle ${autoPlay ? "is-playing" : ""}`} aria-pressed={autoPlay} onClick={() => void changePlayback(pauseUnconfirmed || autoPlay)} disabled={playbackChanging || confirmEnd}>{autoPlay ? <Pause size={13} /> : <Play size={13} />}{pauseUnconfirmed ? "Retry pause" : autoPlay ? "Pause" : "Play"}</button><label className="speed-picker"><span className="sr-only">Playback speed</span><select aria-label="Playback speed" value={pace} onChange={e => { setPace(Number(e.target.value) as 3 | 6); setCountdown(Number(e.target.value)); }}><option value={6}>Normal · 6s</option><option value={3}>Fast · 3s</option></select></label><span className="playback-state" aria-live="off">{playbackChanging ? "Updating playback…" : pauseUnconfirmed ? "Pause not confirmed" : thinking ? `${session.players.find(p => p.seat === session.actor)?.name ?? "Model"} deciding…` : autoPlay ? `${isHandComplete ? "Next hand" : "Next action"} in ${countdown}s` : "Paused"}</span></div></div> : <button type="button" className="text-button" onClick={showRules}>The rules <ArrowDownRight size={13} /></button>}</div>
+          <MarketAnalytics session={session} /><div className="lower-layout"><section className="small-panel"><div className="section-title"><h2>Your positions</h2><span>{positions.length} open</span></div>{positions.length ? positions.map(position => <div className="position-row" key={position.outcome}><div><strong>{session?.players.find(p => p.seat === position.outcome)?.name}</strong><small>{position.quantity} shares · avg {price(position.averageCost)}{position.unliquidatedQuantity > 0 ? ` · ${position.unliquidatedQuantity} without bids` : ""}</small></div><div><strong className={position.unrealizedPnl < 0 ? "negative" : "positive"}>{signed(position.unrealizedPnl)}</strong><small>{credits(position.liquidationValue)} value</small></div></div>) : <div className="empty-state">No positions.<p>Filled orders appear here.</p></div>}{session?.market.openOrders.length ? <><div className="section-title" style={{ marginTop: 14 }}><h2>Open orders</h2><span>{session.market.openOrders.length}</span></div>{session.market.openOrders.map(order => <div className="order-row" key={order.id}><span>{order.side === "buy" ? "Buy" : "Sell"} {order.remainingQuantity} {session.players.find(p => p.seat === order.outcome)?.name} at {price(order.limitPrice)}</span><button type="button" className="cancel-button" aria-label={`Cancel order to ${order.side} ${order.remainingQuantity} shares`} disabled={busy || !autoPlay || session.paused || playbackChanging} onClick={() => void runCommand({ type: "cancel", pokerRevision: session.pokerRevision, orderId: order.id })}>Cancel</button></div>)}</> : null}</section><section className="small-panel"><div className="section-title"><h2>Table activity</h2><span>{session ? `Hand ${session.hand}` : "Recent actions"}</span></div>{session?.activity.length ? <div className="activity-list">{session.activity.slice(-10).reverse().map((activity, i) => <div className="activity-row" key={activity.id}><span className="activity-index">{String(session.activity.length - i).padStart(2, "0")}</span><div>{activity.text}<small>{activity.kind === "trade" ? "Your trade" : activity.kind === "system" ? "Table update" : `Hand ${activity.hand}`}</small></div></div>)}</div> : <div className="empty-state">No activity yet.<p>Poker actions and trades appear here.</p></div>}</section></div><TraderActivity session={session} />
+        </div><div className="market-column"><MarketPanel session={session} bootstrap={bootstrap} busy={busy || loading} playing={autoPlay && !session?.paused && !playbackChanging} onCommand={runCommand} onStart={startGame} /></div></div>
         <div className="info-strip"><span><ShieldCheck size={11} /> Server-enforced poker rules</span><span><Clock3 size={11} /> Five hands per challenge</span><button type="button" className="rules-link" onClick={showRules}>Market & settlement rules <ChevronRight size={10} /></button></div>
       </>}
       {rules}
-    </main><footer className="bottom-band"><div><p>Play-money only. No deposits, withdrawals, or prizes.</p></div><div className="bottom-links"><button type="button" onClick={showRules}>How it works</button><button type="button" onClick={() => { setAutoPlay(false); setTab("leaderboard"); window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); }}>Weekly standings <ArrowRight size={10} style={{ display: "inline", marginLeft: 4 }} /></button></div></footer>
+    </main><footer className="bottom-band"><div><p>Play-money only. No deposits, withdrawals, or prizes.</p></div><div className="bottom-links"><button type="button" onClick={showRules}>How it works</button><button type="button" onClick={() => { void changePlayback(true); setTab("leaderboard"); window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); }}>Weekly standings <ArrowRight size={10} style={{ display: "inline", marginLeft: 4 }} /></button></div></footer>
   </div>;
 }
