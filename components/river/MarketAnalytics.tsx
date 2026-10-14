@@ -120,18 +120,18 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
   </section>;
 }
 
-export function OrderBook({ book, name, settled, traderEngine, agentNotice }: { book: MarketBookView | undefined; name: string | undefined; settled: boolean; traderEngine?: MarketDriver; agentNotice?: string | null }) {
+export function OrderBook({ book, name, settled, traderEngine, agentNotice, recordedAt }: { book: MarketBookView | undefined; name: string | undefined; settled: boolean; traderEngine?: MarketDriver; agentNotice?: string | null; recordedAt?: { hand: number; tick: number } }) {
   const bids = book?.bids.slice(0, 6) ?? [];
   const asks = book?.asks.slice(0, 6) ?? [];
   const maxQuantity = Math.max(1, ...bids.map(level => level.quantity), ...asks.map(level => level.quantity));
   const spread = book?.bestAsk != null && book.bestBid != null ? Math.round((book.bestAsk - book.bestBid) * 100) : null;
   return <section className="clob-panel" aria-label={`Order book for ${name ?? "selected model"}`}>
-    <div className="clob-heading"><h3>Order book <span>{name}</span></h3><span>{settled ? "Settled" : spread == null ? "No two-sided quote" : `${spread}¢ spread`}</span></div>
-    {traderEngine === "jev" ? <p className="clob-agent-status" role="status">{settled ? "Jev trading complete. Orders settled." : agentNotice ?? "Orders chosen by Jev · Play money only."}</p> : null}
+    <div className="clob-heading"><h3>{recordedAt ? "Historical Order Book" : "Order book"} <span>{name}</span></h3><span>{recordedAt ? `Hand ${recordedAt.hand} · ${recordedAt.tick}s · ${settled ? "Settled" : "Recorded"}` : settled ? "Settled" : spread == null ? "No two-sided quote" : `${spread}¢ spread`}</span></div>
+    {traderEngine === "jev" && !recordedAt ? <p className="clob-agent-status" role="status">{settled ? "Jev trading complete. Orders settled." : agentNotice ?? "Orders chosen by Jev · Play money only."}</p> : null}
     <div className="clob-columns">{([{ label: "Bids", levels: bids, kind: "bid" }, { label: "Asks", levels: asks, kind: "ask" }] as const).map(side => <div className={`clob-side clob-${side.kind}`} key={side.kind}>
       <div className="clob-column-head"><strong>{side.label}</strong><span>Shares</span></div>
-      {side.levels.length ? side.levels.map(level => <div className="clob-level" key={level.price}><i className="clob-volume" aria-hidden="true" style={{ width: `${100 * level.quantity / maxQuantity}%` }} /><span>{percent(level.price)}</span><span>{level.quantity.toLocaleString()}</span></div>) : <p className="clob-empty">{settled ? "—" : `No ${side.label.toLowerCase()}`}</p>}
+      {side.levels.length ? side.levels.map(level => <div className="clob-level" key={level.price}><i className="clob-volume" aria-hidden="true" style={{ width: `${100 * level.quantity / maxQuantity}%` }} /><span>{recordedAt ? `${Math.round(level.price * 100)}¢` : percent(level.price)}</span><span>{level.quantity.toLocaleString()}</span></div>) : <p className="clob-empty">{recordedAt ? settled ? "Orders closed at settlement." : `No ${side.label.toLowerCase()} recorded at this step.` : settled ? "—" : `No ${side.label.toLowerCase()}`}</p>}
     </div>)}</div>
-    <p className="clob-caption">1% = 1¢ per share · Bars show available shares</p>
+    <p className="clob-caption">{recordedAt ? settled ? "Orders closed at settlement. Step back to inspect earlier quotes." : "Top 6 recorded price levels per side · Prices per share · Read-only snapshot" : "1% = 1¢ per share · Bars show available shares"}</p>
   </section>;
 }

@@ -5,7 +5,7 @@ import { ArrowLeft, ArrowRight, History, LoaderCircle, Pause, Play, RotateCcw } 
 import type { GameHistory, GameReplay } from "../../app/types";
 import { PokerTable, type TableSeat } from "./PokerTable";
 import { dollars, MarketPanel, price, signed } from "./MarketPanel";
-import { MarketAnalytics } from "./MarketAnalytics";
+import { MarketAnalytics, OrderBook } from "./MarketAnalytics";
 import { PositionsStrip } from "./PositionsStrip";
 import { TraderActivity } from "./TraderActivity";
 import "./game-history.css";
@@ -64,7 +64,7 @@ export function YourGames({ initialReplayId }: { initialReplayId: string | null 
         <td><time dateTime={game.completedAt}>{new Date(game.completedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</time></td>
         <td>{game.mode === "live" ? "Live models" : "Practice"}<small>{game.ranked ? "Ranked" : "Unranked"} · 5 hands</small></td>
         <td className={game.pnl < 0 ? "negative" : "positive"}>{signed(game.pnl)}</td>
-        <td><button type="button" className="secondary-button" disabled={!game.replayAvailable || opening !== null} title={game.replayAvailable ? "Watch this game automatically" : "This game started before replay recording was available."} onClick={() => void openReplay(game.id)}>{opening === game.id ? <LoaderCircle size={12} className="loading-spinner" /> : <Play size={12} />}{opening === game.id ? "Loading…" : game.replayAvailable ? "Replay" : "Unavailable"}</button></td>
+        <td><button type="button" className="secondary-button" disabled={!game.replayAvailable || opening !== null} title={game.replayAvailable ? "Open this recorded game" : "This game started before replay recording was available."} onClick={() => void openReplay(game.id)}>{opening === game.id ? <LoaderCircle size={12} className="loading-spinner" /> : <Play size={12} />}{opening === game.id ? "Loading…" : game.replayAvailable ? "Replay" : "Unavailable"}</button></td>
       </tr>)}</tbody></table></div><p className="history-note">Replays are recorded for new challenges. Games started before recording was added have no replay.</p></>
       : !error ? <div className="leaderboard-empty"><History size={24} className="history-empty-icon" />No completed games yet.<p>Finish all five hands and your challenge will appear here.</p></div> : null}
     {history && (page > 0 || history.nextPage !== null) ? <div className="history-pagination"><button className="secondary-button" type="button" disabled={loading || page === 0} onClick={() => changePage(page - 1)}><ArrowLeft size={12} />Newer games</button><span>Page {page + 1}</span><button className="secondary-button" type="button" disabled={loading || history.nextPage === null} onClick={() => changePage(history.nextPage!)}>Older games<ArrowRight size={12} /></button></div> : null}
@@ -73,7 +73,8 @@ export function YourGames({ initialReplayId }: { initialReplayId: string | null 
 
 export function ReplayPlayer({ replay, onClose }: { replay: GameReplay; onClose: () => void }) {
   const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
+  const [bookOutcome, setBookOutcome] = useState(0);
   const [delay, setDelay] = useState(2000);
   const frames = replay.frames;
   const last = frames.length - 1;
@@ -119,15 +120,20 @@ export function ReplayPlayer({ replay, onClose }: { replay: GameReplay; onClose:
       <label className="replay-timeline"><span>{finished ? "Replay complete" : playing ? "Playing" : "Paused"} · Step {index + 1} of {frames.length}</span><input aria-label="Replay timeline" type="range" min={0} max={last} value={index} onChange={event => seek(Number(event.target.value))} /></label>
     </div>
     <section className="stats-strip" aria-label="Recorded challenge account"><div className="stat-block"><span className="stat-label">Available cash</span><div className="stat-value">{dollars(session.market.availableCash)}</div></div><div className="stat-block"><span className="stat-label">Account value</span><div className="stat-value">{dollars(session.market.totalLiquidationValue)}</div></div><div className="stat-block"><span className="stat-label">Total PnL</span><div className={`stat-value ${session.pnl < 0 ? "negative" : "positive"}`}>{signed(session.pnl)}</div></div><div className="stat-block"><span className="stat-label">Recorded hand</span><div className="hand-progress-top"><span>Hand {session.hand} of 5</span><span>{session.street === "complete" ? "Settled" : session.street}</span></div></div></section>
-    {session.status === "complete" ? <section className="settlement-panel"><span className="eyebrow">FINAL RESULT</span><h2>Five hands complete</h2><div className={`settlement-value ${session.pnl < 0 ? "negative" : "positive"}`}>{signed(session.pnl)}</div><div className="result-rows">{session.results.map(result => <div className="result-hand" key={result.hand}><small>HAND {result.hand}</small><span className={result.pnl < 0 ? "negative" : "positive"}>{signed(result.pnl)}</span></div>)}</div></section> : null}
     <div className="game-layout"><div className="game-main"><div className="section-title"><h2>The recorded table</h2><span>Hand {session.hand} · {session.street === "complete" ? "Showdown" : session.street}</span></div>
       <PositionsStrip session={session} readOnly />
       <PokerTable seats={seats} board={session.board} pot={session.pot} winningCards={session.winningCards} street={session.street} started busy={false} settled={session.status !== "playing"} />
       <div className="table-controls"><div className="event-summary" aria-live={playing ? "off" : "polite"}><strong>{frame.label}</strong><p>Step {index + 1} of {frames.length} · <time dateTime={frame.at}>{new Date(frame.at).toLocaleTimeString("en-US")}</time></p></div></div>
+      <section className="replay-order-book" aria-label="Historical order book">
+        <div className="replay-book-toolbar"><div className="trade-tabs replay-book-models" role="group" aria-label="Historical order book model">{session.players.map(player => <button type="button" className={`trade-tab ${bookOutcome === player.seat ? "active" : ""}`} key={player.seat} aria-pressed={bookOutcome === player.seat} onClick={() => { setPlaying(false); setBookOutcome(player.seat); }}>{player.name}</button>)}</div><div className="replay-book-steps"><button className="text-button" type="button" aria-label="Previous recorded snapshot" disabled={index === 0} onClick={() => seek(index - 1)}>Previous</button><span>Step {index + 1} of {frames.length}</span><button className="text-button" type="button" aria-label="Next recorded snapshot" disabled={finished} onClick={() => seek(index + 1)}>Next</button></div></div>
+        <OrderBook book={session.market.books.find(book => book.outcome === bookOutcome)} name={session.players.find(player => player.seat === bookOutcome)?.name} settled={session.market.status === "settled"} recordedAt={{ hand: session.hand, tick: session.market.tick }} />
+        <p className="history-note">Pause, step, or scrub the replay to inspect recorded depth. Earlier replays may omit updates between recorded steps.</p>
+      </section>
       <MarketAnalytics session={session} />
       <div className="lower-layout"><section className="small-panel"><div className="section-title"><h2>Recorded open orders</h2><span>{session.market.openOrders.length}</span></div>{session.market.openOrders.length ? session.market.openOrders.map(order => <div className="order-row" key={order.id}>{order.side === "buy" ? "Buy" : "Sell"} {order.remainingQuantity} {session.players.find(player => player.seat === order.outcome)?.name} at {price(order.limitPrice)}</div>) : <div className="empty-state">No open orders at this step.</div>}</section>
         <section className="small-panel"><div className="section-title"><h2>Recorded activity</h2><span>Hand {session.hand}</span></div><div className="activity-list">{session.activity.slice(-10).reverse().map(activity => <div className="activity-row" key={activity.id}><div>{activity.text}<small>{activity.kind === "trade" ? "Your trade" : `Hand ${activity.hand}`}</small></div></div>)}</div></section></div>
       <TraderActivity session={session} />
-    </div><div className="market-column"><MarketPanel session={session} bootstrap={null} busy={false} readOnly /></div></div>
+    </div><div className="market-column"><MarketPanel session={session} bootstrap={null} busy={false} readOnly showOrderBook={false} selectedOutcome={bookOutcome} onSelectOutcome={outcome => { setPlaying(false); setBookOutcome(outcome); }} /></div></div>
+    {session.status === "complete" ? <section className="settlement-panel"><span className="eyebrow">FINAL RESULT</span><h2>Five hands complete</h2><div className={`settlement-value ${session.pnl < 0 ? "negative" : "positive"}`}>{signed(session.pnl)}</div><div className="result-rows">{session.results.map(result => <div className="result-hand" key={result.hand}><small>HAND {result.hand}</small><span className={result.pnl < 0 ? "negative" : "positive"}>{signed(result.pnl)}</span></div>)}</div></section> : null}
   </section>;
 }

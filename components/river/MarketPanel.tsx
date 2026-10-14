@@ -10,13 +10,14 @@ export function dollars(value: number) { return value.toLocaleString("en-US", { 
 export function signed(value: number) { return `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`; }
 export function price(value: number | null | undefined) { return value == null ? "—" : `${Math.round(value * 100)}¢`; }
 
-export function MarketPanel({ session, bootstrap, busy, playing = false, onCommand, onStart, readOnly = false }: {
+export function MarketPanel({ session, bootstrap, busy, playing = false, onCommand, onStart, readOnly = false, showOrderBook = true, selectedOutcome, onSelectOutcome }: {
   session: SessionView | null; bootstrap: Bootstrap | null; busy: boolean; playing?: boolean;
   onCommand?: (command: SessionCommand) => Promise<void>;
   onStart?: (mode: GameMode, ranked: boolean, personalitiesEnabled: boolean) => Promise<boolean>;
-  readOnly?: boolean;
+  readOnly?: boolean; showOrderBook?: boolean; selectedOutcome?: number; onSelectOutcome?: (outcome: number) => void;
 }) {
-  const [selected, setSelected] = useState(0);
+  const [localSelected, setSelected] = useState(0);
+  const selected = selectedOutcome ?? localSelected;
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [quantity, setQuantity] = useState("25");
   const [orderType, setOrderType] = useState<"ioc" | "limit">("ioc");
@@ -78,7 +79,7 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
         const buyShares = sharesAtQuote(rowBook, session.market.openOrders, "buy");
         const sellShares = sharesAtQuote(rowBook, session.market.openOrders, "sell");
         const detail = holding > 0 ? `You own ${holding}` : model.folded ? "Folded" : ended && payout > 0 ? "Winner" : null;
-        return <button type="button" key={model.seat} className={`market-row ${selected === model.seat ? "selected" : ""}`} aria-pressed={selected === model.seat} onClick={() => { setSelected(model.seat); setQuote(null); setTicketError(null); }}>
+        return <button type="button" key={model.seat} className={`market-row ${selected === model.seat ? "selected" : ""}`} aria-pressed={selected === model.seat} onClick={() => { setSelected(model.seat); onSelectOutcome?.(model.seat); setQuote(null); setTicketError(null); }}>
           <span className="market-model"><ModelMark name={model.name} /><span className="market-model-label"><span className="market-model-name">{session.mode === "practice" ? model.name : model.modelId || model.name}</span><small className="market-row-detail">{detail ?? "\u00a0"}</small></span></span>
           <span className="price-box" aria-label={ended ? `Payout ${dollars(payout)}` : `Buy at ${price(rowBook?.bestAsk)}, ${buyShares} shares available`}>{ended ? payout > 0 && payout < 1 ? `1/${session?.winners.length}` : price(payout) : price(rowBook?.bestAsk)}{!ended ? <small className="quote-quantity">{buyShares.toLocaleString("en-US")} sh</small> : null}</span><span className="price-box sell-price" aria-label={ended ? payout > 0 ? "Winner" : "Lost" : `Sell at ${price(rowBook?.bestBid)}, buyers for ${sellShares} shares`}>{ended ? payout > 0 ? "WIN" : "—" : price(rowBook?.bestBid)}{!ended ? <small className="quote-quantity">{sellShares.toLocaleString("en-US")} sh</small> : null}</span>
         </button>;
@@ -117,6 +118,6 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
       <div className="trade-feedback"><span className="trade-feedback-label">Last order update · <time dateTime={lastTrade.at}>{new Date(lastTrade.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time></span><p>{lastTrade.text}</p></div>
       <button type="button" aria-label="Dismiss order update" onClick={() => setDismissedTrade(lastTrade.id)}><X size={14} /></button>
     </div> : null}
-    {session ? <OrderBook book={book} name={selectedPlayer?.name} settled={ended} traderEngine={session.market.driver} agentNotice={session.market.agentNotice} /> : null}
+    {session && showOrderBook ? <OrderBook book={book} name={selectedPlayer?.name} settled={ended} traderEngine={session.market.driver} agentNotice={session.market.agentNotice} /> : null}
   </aside>;
 }

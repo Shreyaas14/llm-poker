@@ -282,3 +282,18 @@ test('a failed Jev call counts against the durable allowance and never falls bac
     assert.equal(held.calls(),1,'failure still observes cooldown');
   } finally {held.release();await ticking.catch(()=>{});held.restore();}
 });
+
+test('Jev-only quote changes are saved as historical book frames without a human trade',async()=>{
+  const {owner,game}=await startJev(),held=heldMarket();
+  const ticking=server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
+  await held.entered;
+  try {
+    held.release();const result=await ticking;
+    assert.equal(result.market.cash,1000);assert.ok(result.market.books.some(book=>book.bestAsk!=null));
+    const frames=storage.prepare('SELECT frame FROM replay_frames WHERE session_id=? ORDER BY version').all(game.id).map(row=>JSON.parse(String(row.frame)));
+    assert.equal(frames.length,2);assert.match(frames[1].label,/Market snapshot/);
+    assert.deepEqual(frames[1].session.market.books,result.market.books);
+    assert.ok(frames[0].session.market.books.every((book:{bestAsk:number|null})=>book.bestAsk==null));
+    assert.equal(frames[1].session.tradingOpen,false);
+  } finally {held.release();await ticking.catch(()=>{});held.restore();}
+});

@@ -215,3 +215,10 @@ The portable build runs Vinext directly without a host `timeout` command. The ma
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
 - [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+
+
+## Historical order books in replay
+
+Replay opens paused and displays a wider Historical Order Book with a model selector, bid/ask prices in cents, share quantities, hand/time labels, and nearby Previous/Next snapshot controls. The selection is shared with the recorded market panel. Settled snapshots explicitly explain that orders were closed; step backward to inspect earlier quotes. The final result sits below the recorded table so it does not push the book down on the last step.
+
+New recordings retain market-only depth and volume changes as well as poker/human actions. Idle ticks with unchanged books and human accounts are omitted. Replay snapshots remain read-only and never call Jev or other providers. Existing recordings display their saved books, but intermediate quotes that were never recorded cannot be reconstructed. More book changes mean more replay frames and stored snapshot data.

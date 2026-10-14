@@ -34,3 +34,18 @@
   .replay-buttons button { padding: 10px; font-size: 10px; }
   .history-table button { padding: 8px; font-size: 9px; }
 }
+
+.replay-order-book{margin:24px 0 32px;padding-top:20px;border-top:1px solid var(--line)}
+.replay-book-models{justify-content:flex-start;gap:20px}
+.replay-book-models .trade-tab{font-size:13px;min-height:32px}
+.replay-order-book .clob-panel{margin-top:0;padding-top:0;border-top:0}
+.replay-order-book .clob-heading h3{font-size:15px}
+.replay-order-book .clob-heading h3>span{font-size:14px;color:var(--ink)}
+.replay-order-book .clob-heading>span{font-size:12px}
+.replay-order-book .clob-level{font-size:14px;min-height:32px}
+.replay-order-book .clob-column-head,.replay-order-book .clob-column-head strong{font-size:12px}
+.replay-order-book .clob-side{min-height:246px}
+
+.replay-book-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px;flex-wrap:wrap}
+.replay-book-steps{display:flex;align-items:center;gap:16px;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.replay-book-steps .text-button{min-height:32px;font-size:12px}

@@ -37,3 +37,8 @@ Full `npm run lint` still reports the pre-existing `react-hooks/set-state-in-eff
 ## Jev Live traders follow-up
 
 New Live sessions use Jev through Gateway; Practice and legacy sessions keep local strategies. The added adapter/market/service tests use mocked provider replies, with no billed calls. The complete suite now passes 115 tests. TypeScript, targeted lint, the production build, and a five-hand Practice API smoke test (64 poker actions, 139 replay steps) passed. Real Jev connectivity, decision quality, and latency have not been measured. See README's Jev market traders section for the bounded action menus, concurrency guards, and separate call budget.
+
+
+## Historical order book replay follow-up
+
+Verified in a real saved Practice replay at desktop size: replay opens paused; selecting Claude updates both the wider historical book and sidebar selection; Next moves from hand 1 at 0s to the recorded 4s snapshot; Previous restores the original prices/quantities; seeking the last step shows settled orders with guidance to step backward. New service coverage verifies a Jev-only quote update records a replay frame without any human trade. Older recordings remain limited to the snapshots already saved. No provider calls are made by replay.
