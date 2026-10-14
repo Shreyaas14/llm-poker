@@ -40,10 +40,12 @@ export function PokerTable({ seats, board, pot, street, started, busy, settled, 
   const acting = seats.find(seat => seat.active && !seat.folded);
   const turnLabel = !started ? "Ready to deal" : settled ? "Hand settled" : acting ? `${acting.name} ${busy ? "is deciding…" : "to act"}` : busy ? "Resolving hand…" : "Waiting for next action";
   return <section className="table-panel vesper-table" aria-label={`Poker table, ${street.replaceAll("_", " ")}`}>
-    <div className="table-turn-status" role="status" aria-live="polite">{turnLabel}</div>
-    <div className="board-area">
-      <div className="board-cards" role="group" aria-label="Community cards">{Array.from({ length: 5 }, (_, i) => <PlayingCard key={i} card={board[i]} winning={winningCards.includes(board[i])} ghost />)}</div>
-      <div className="board-pot"><span>Pot</span><strong>{pot.toLocaleString()}</strong></div>
+    <div className="table-surface">
+      <div className="table-turn-status" role="status" aria-live="polite">{turnLabel}</div>
+      <div className="board-area">
+        <div className="board-cards" role="group" aria-label="Community cards">{Array.from({ length: 5 }, (_, i) => <PlayingCard key={i} card={board[i]} winning={winningCards.includes(board[i])} ghost />)}</div>
+        <div className="board-pot"><span>Pot</span><strong>{pot.toLocaleString()}</strong></div>
+      </div>
     </div>
     <div className="seats-grid">{seats.map((seat, i) => {
       const state = seat.winner ? "Winner" : seat.folded ? "Folded" : seat.allIn ? "All-in" : seat.active && !settled ? "To act" : null;
