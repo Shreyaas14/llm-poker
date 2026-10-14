@@ -49,6 +49,7 @@ export default function Home() {
   const mounted = useRef(true);
   const playbackIntent = useRef(false);
   const playbackRequest = useRef<boolean | null>(null);
+  const endRunPlayback = useRef<{ sessionId: string; resume: boolean } | null>(null);
 
   const acceptSession = useCallback((next: SessionView) => {
     const previous = sessionRef.current;
@@ -210,13 +211,30 @@ export default function Home() {
     finally { setBusy(false); }
   }
 
+  function confirmEndRun() {
+    const current = sessionRef.current;
+    if (!current || current.status === "complete" || playbackRequest.current !== null) return;
+    endRunPlayback.current = { sessionId: current.id, resume: playbackIntent.current && !current.paused };
+    setConfirmEnd(true);
+    void changePlayback(true);
+  }
+
+  async function keepPlaying() {
+    // Wait for the pause acknowledgement before restoring the previous intent.
+    if (playbackRequest.current !== null) return;
+    const previous = endRunPlayback.current;
+    endRunPlayback.current = null;
+    if (previous?.sessionId === sessionRef.current?.id && previous?.resume) await changePlayback(false);
+    setConfirmEnd(false);
+  }
+
   async function endRun() {
     if (!session) return;
     playbackIntent.current = false; setAutoPlay(false); setBusy(true); setError(null);
     try {
       await Promise.all([commandQueue.current, marketQueue.current]);
       await request<{ ok: true }>(`/api/session/${session.id}`, { method: "DELETE", body: "{}" });
-      sessionRef.current = null; setSession(null); setConfirmEnd(false); setTradeError(null);
+      sessionRef.current = null; setSession(null); setConfirmEnd(false); endRunPlayback.current = null; setTradeError(null);
       setAnnouncement("Run ended. You can start a new challenge.");
       await loadBootstrap();
     } catch (e) { setError(e instanceof Error ? e.message : "Could not end this run."); }
@@ -248,9 +266,9 @@ export default function Home() {
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
       {tab === "games" ? <YourGames initialReplayId={initialReplayId} /> : tab === "leaderboard" ? <section className="leaderboard-section"><div className="leaderboard-head"><div><h2>Weekly leaderboard</h2><p>Best completed five-hand PnL from each player’s first three ranked starts. {bootstrap?.nextReset ? `Resets ${new Date(bootstrap.nextReset).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short", timeZone: "America/Los_Angeles" })}.` : "A fresh leaderboard every week."}</p></div><div className="trade-tabs" aria-label="Leaderboard mode"><button type="button" className={`trade-tab ${boardMode === "practice" ? "active" : ""}`} aria-pressed={boardMode === "practice"} onClick={() => setBoardMode("practice")}>Practice</button><button type="button" className={`trade-tab ${boardMode === "live" ? "active" : ""}`} aria-pressed={boardMode === "live"} onClick={() => setBoardMode("live")}>Live models</button></div></div>{leaderboard.length ? <table className="leaderboard-table"><thead><tr><th scope="col">Rank</th><th scope="col">Trader</th><th scope="col" className="hide-mobile">Completed runs</th><th scope="col">Best PnL</th></tr></thead><tbody>{leaderboard.map(entry => <tr key={entry.username}><td>{entry.rank <= 3 ? <span className="rank-medal">{entry.rank}</span> : entry.rank}</td><td>{entry.username}{entry.isYou ? <span className="you-label">You</span> : null}</td><td className="hide-mobile">{entry.completedRuns}</td><td className={entry.pnl < 0 ? "negative" : "positive"}>{signed(entry.pnl)}</td></tr>)}</tbody></table> : <div className="leaderboard-empty">No scores yet.<p>No completed ranked {boardMode} challenges yet.</p></div>}<div className="table-controls"><p className="muted" style={{ fontSize: 10 }}>Ranked challenges require a profile. Practice and live results stay separate.</p><button type="button" className="primary-button" onClick={() => setTab("table")}>Back to Play <ArrowRight size={13} /></button></div></section> : <>
         <section className="stats-strip" aria-label="Challenge account"><div className="stat-block"><span className="stat-label">Available cash</span><div className="stat-value">{dollars(session?.market.availableCash ?? 1000)}</div></div><div className="stat-block"><span className="stat-label">Account value</span><div className="stat-value">{dollars(session?.market.totalLiquidationValue ?? 1000)}</div></div><div className="stat-block"><span className="stat-label">Total PnL</span><div className={`stat-value ${pnl < 0 ? "negative" : "positive"}`}>{signed(pnl)}</div></div><div className="stat-block"><span className="stat-label">Your challenge</span><div className="hand-progress-top"><span>{session ? `Hand ${session.hand} of 5` : "Five hands"}</span><span>{session ? session.ranked ? "Ranked" : "Unranked" : "Not started"}</span></div></div></section>
-        {confirmEnd ? <section className="end-run-panel" aria-label="Confirm ending this run"><div><strong>End this challenge?</strong><p>Your unfinished score won’t enter the leaderboard.{session?.ranked ? " This ranked attempt will still count." : " You can start fresh in either mode."}</p></div><div><button type="button" className="secondary-button" disabled={busy} onClick={() => setConfirmEnd(false)}>Keep playing</button><button type="button" className="primary-button" disabled={busy} onClick={() => void endRun()}>End run</button></div></section> : null}
+        {confirmEnd ? <section className="end-run-panel" aria-label="Confirm ending this run"><div><strong>End this challenge?</strong><p>Your unfinished score won’t enter the leaderboard.{session?.ranked ? " This ranked attempt will still count." : " You can start fresh in either mode."}</p></div><div><button type="button" className="secondary-button" disabled={busy || playbackChanging} onClick={() => void keepPlaying()}>Keep playing</button><button type="button" className="primary-button" disabled={busy || playbackChanging} onClick={() => void endRun()}>End run</button></div></section> : null}
 
-        <a className="mobile-market-jump" href="#prediction-market">{!session ? "Set up your challenge" : session.status !== "playing" ? "View this hand’s result" : "Trade this hand"}</a><div className="game-layout"><div className="game-main"><div className="section-title"><h2 className="title-with-icon">Table <span className="muted">/</span> <span>{session ? session.mode === "live" ? "Live models" : "Practice" : "Four players"}</span></h2>{session ? <div className="table-section-actions"><span className="numeric">{session.street === "complete" ? "Showdown" : session.street.charAt(0).toUpperCase() + session.street.slice(1)}</span>{!isComplete ? <button type="button" onClick={() => { void changePlayback(true); setConfirmEnd(true); }} disabled={busy}>End run</button> : null}</div> : <span>01 — 05</span>}</div>
+        <a className="mobile-market-jump" href="#prediction-market">{!session ? "Set up your challenge" : session.status !== "playing" ? "View this hand’s result" : "Trade this hand"}</a><div className="game-layout"><div className="game-main"><div className="section-title"><h2 className="title-with-icon">Table <span className="muted">/</span> <span>{session ? session.mode === "live" ? "Live models" : "Practice" : "Four players"}</span></h2>{session ? <div className="table-section-actions"><span className="numeric">{session.street === "complete" ? "Showdown" : session.street.charAt(0).toUpperCase() + session.street.slice(1)}</span>{!isComplete ? <button type="button" onClick={confirmEndRun} disabled={busy || playbackChanging}>End run</button> : null}</div> : <span>01 — 05</span>}</div>
           {session ? <PositionsStrip session={session} /> : null}
           <PokerTable seats={seats} board={session?.board ?? []} pot={session?.pot ?? 0} winningCards={session?.winningCards ?? []} street={session?.street ?? "preflop"} started={Boolean(session)} busy={thinking} settled={Boolean(session && session.status !== "playing")} />
           {session ? <div className="table-controls"><div className="event-summary-wrap"><div className="event-summary"><strong>{loading ? "Connecting to the table…" : !session ? "Ready to deal." : isComplete ? "Five hands complete." : isHandComplete ? session.results.at(-1)?.description ?? "This hand has settled." : latestPokerAction?.text ?? "Cards dealt. Trading is open."}</strong><p>{!session ? "Start a challenge to deal the first hand." : isComplete ? "Final score settled." : isHandComplete ? `Hand PnL: ${signed(session.results.at(-1)?.pnl ?? 0)} · Orders closed.` : !autoPlay ? pauseUnconfirmed ? "Pause not confirmed. Retry to freeze the market." : "Paused · Trading disabled" : session.tradingOpen ? "" : "Trading reopens after the next action."}</p></div></div>{session && !isComplete ? <div className="playback-controls" aria-label="Playback controls"><div className="playback-options"><button type="button" className={`secondary-button playback-toggle ${autoPlay ? "is-playing" : ""}`} aria-pressed={autoPlay} onClick={() => void changePlayback(pauseUnconfirmed || autoPlay)} disabled={playbackChanging || confirmEnd}>{autoPlay ? <Pause size={13} /> : <Play size={13} />}{pauseUnconfirmed ? "Retry pause" : autoPlay ? "Pause" : "Play"}</button><label className="speed-picker"><span className="sr-only">Playback speed</span><select aria-label="Playback speed" value={pace} onChange={e => { const nextPace = Number(e.target.value) as PlayPace; setPace(nextPace); setCountdown(playbackDelay(nextPace, Boolean(isHandComplete))); }}><option value={6}>Normal · 6s</option><option value={3}>Fast · 3s</option><option value={0}>Realtime · no delay</option></select><ChevronDown className="speed-picker-arrow" size={13} aria-hidden="true" /></label><span className="playback-state" aria-live="off">{playbackChanging ? "Updating playback…" : pauseUnconfirmed ? "Pause not confirmed" : thinking ? `${session.players.find(p => p.seat === session.actor)?.name ?? "Model"} deciding…` : autoPlay ? pace === 0 ? "Realtime · no added delay" : `${isHandComplete ? "Next hand" : "Next action"} in ${countdown}s` : "Paused"}</span></div></div> : <div className="playback-controls"><button type="button" className="text-button" onClick={showRules}>How to Play</button></div>}</div> : null}
