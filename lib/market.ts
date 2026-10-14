@@ -33,12 +33,21 @@ export interface PositionView {
   costBasis: number; averageCost: number;
   liquidationValue: number; unrealizedPnl: number; unliquidatedQuantity: number;
 }
+export interface TraderPositionView {
+  id: string; name: string; kind: TraderKind; holdings: number[];
+  initialSharesPerOutcome: number; netFilledShares: number[] | null; openOrders: number;
+}
+export interface MarketTradeView {
+  id: string; tick: number; outcome: number; price: number; quantity: number;
+  buyer: { id: string; name: string }; seller: { id: string; name: string };
+}
 export interface MarketView {
   status: "open" | "settled"; tick: number; startingBankroll: number;
   cash: number; availableCash: number; reservedCash: number;
   totalLiquidationValue: number; pnl: number; realizedPnl: number;
   positions: PositionView[]; books: MarketBookView[]; openOrders: PublicOrder[];
   fills: PublicFill[]; history: { tick: number; prices: (number | null)[] }[];
+  traderPositions: TraderPositionView[]; recentTrades: MarketTradeView[];
   payouts: number[] | null;
 }
 export interface OrderResult {
@@ -49,6 +58,8 @@ export interface OrderResult {
 export interface Account {
   id: string; cashUnits: number; shares: number[];
   costBasisUnits: number[]; realizedPnlUnits: number;
+  /** Preserve executed inventory at settlement; current shares are then redeemed to zero. */
+  settlementHoldings?: number[];
 }
 export interface RestingOrder {
   id: string; owner: string; outcome: number; side: Side;
@@ -75,6 +86,7 @@ export interface MarketState {
 }
 
 function copy(state: MarketState): MarketState { return structuredClone(state); }
+function seededShares(kind: TraderKind): number { return kind === "maker" ? 700 : 240; }
 function random(state: MarketState): number {
   let x = state.rngState;
   x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
@@ -230,7 +242,7 @@ export function createMarket(values: number[], seed: number, bankroll = 1000): M
   const kinds: TraderKind[] = ["maker", "maker", "fundamental", "fundamental", "fundamental", "fundamental", "equity", "equity", "equity", "momentum", "momentum", "contrarian", "contrarian", "noise", "noise", "noise"];
   kinds.forEach((kind, index) => {
     const id = `trader-${index}`, funding = (kind === "maker" ? 1800 : 800) * UNITS_PER_CREDIT;
-    const sets = kind === "maker" ? 700 : 240;
+    const sets = seededShares(kind);
     state.initialTotalCashUnits += funding;
     state.collateralUnits += sets * UNITS_PER_CREDIT; state.completeSetsIssued += sets;
     state.accounts[id] = { id, cashUnits: funding - sets * UNITS_PER_CREDIT, shares: [sets, sets, sets, sets],
@@ -307,6 +319,7 @@ export function settleMarket(previous: MarketState, payouts: number[]): MarketSt
   const units = payouts.map(v => v === 0 ? 0 : UNITS_PER_CREDIT / winners);
   state.orders = [];
   for (const account of Object.values(state.accounts)) {
+    account.settlementHoldings = [...account.shares];
     for (let outcome = 0; outcome < OUTCOMES; outcome++) {
       const payout = account.shares[outcome] * units[outcome];
       account.cashUnits += payout; state.collateralUnits -= payout;
@@ -325,9 +338,27 @@ function depth(state: MarketState, outcome: number, side: Side): DepthLevel[] {
   return [...levels].sort(([a], [b]) => side === "buy" ? b - a : a - b).map(([priceTicks, quantity]) => ({ price: priceTicks / 100, quantity }));
 }
 
-/** Public projection: no seeds, future data, synthetic account balances, or private beliefs. */
+/** Public projection: executed holdings and named fills, never seeds, future data, synthetic cash balances, or beliefs. */
 export function getMarketView(state: MarketState): MarketView {
   const human = state.accounts[HUMAN];
+  const kindNames: Record<TraderKind, string> = { maker: "Maker", fundamental: "Value", equity: "Equity", momentum: "Momentum", contrarian: "Contrarian", noise: "Noise" };
+  const kindCounts = new Map<TraderKind, number>();
+  const names = new Map<string, string>([[HUMAN, "You"]]);
+  for (const trader of state.traders) {
+    const index = (kindCounts.get(trader.kind) ?? 0) + 1;
+    kindCounts.set(trader.kind, index);
+    names.set(trader.id, `${kindNames[trader.kind]} ${index}`);
+  }
+  const traderPositions: TraderPositionView[] = state.traders.map(trader => {
+    const account = state.accounts[trader.id];
+    const initialSharesPerOutcome = seededShares(trader.kind);
+    const executedHoldings = state.status === "settled" ? account.settlementHoldings : account.shares;
+    return { id: trader.id, name: names.get(trader.id)!, kind: trader.kind, holdings: [...account.shares], initialSharesPerOutcome,
+      // Legacy settled sessions have no pre-redemption snapshot. Never present redemption as a sale.
+      netFilledShares: executedHoldings?.map(quantity => quantity - initialSharesPerOutcome) ?? null,
+      openOrders: state.orders.filter(order => order.owner === trader.id).length };
+  });
+  const participant = (id: string) => ({ id, name: names.get(id) ?? "Trader" });
   const positions: PositionView[] = human.shares.map((quantity, outcome) => {
     let remaining = quantity, valueUnits = 0;
     const bids = state.orders.filter(o => o.owner !== HUMAN && o.outcome === outcome && o.side === "buy").sort((a, b) => b.priceTicks - a.priceTicks || a.sequence - b.sequence);
@@ -352,5 +383,8 @@ export function getMarketView(state: MarketState): MarketView {
         lastPrice: state.lastPriceTicks[outcome] === null ? null : state.lastPriceTicks[outcome]! / 100, volume: state.volumes[outcome] };
     }), openOrders: state.orders.filter(o => o.owner === HUMAN).map(o => ({ id: o.id, outcome: o.outcome, side: o.side, quantity: o.quantity,
       remainingQuantity: o.remaining, limitPrice: o.priceTicks / 100, createdAt: o.createdAt })),
-    fills: state.fills.slice(-20).reverse().map(publicFill), history: state.history.map(h => ({ tick: h.tick, prices: [...h.prices] })), payouts: state.payouts ? [...state.payouts] : null };
+    fills: state.fills.slice(-20).reverse().map(publicFill),
+    traderPositions, recentTrades: state.fills.slice(-20).reverse().map(fill => ({ id: fill.id, tick: fill.tick, outcome: fill.outcome,
+      price: fill.priceTicks / 100, quantity: fill.quantity, buyer: participant(fill.buyer), seller: participant(fill.seller) })),
+    history: state.history.map(h => ({ tick: h.tick, prices: [...h.prices] })), payouts: state.payouts ? [...state.payouts] : null };
 }

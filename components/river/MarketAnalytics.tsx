@@ -5,7 +5,7 @@ import type { SessionView, ShowdownOdds } from "../../app/types";
 import type { MarketBookView } from "../../lib/market";
 import "./market-analytics.css";
 
-const LINE_COLORS = ["#33755b", "#bf7041", "#557ac0", "#9466a5"];
+const LINE_COLORS = ["#087d73", "#be7b27", "#6c58c4", "#c04f7b"];
 const WIDTH = 620;
 const HEIGHT = 194;
 const LEFT = 6;
@@ -57,7 +57,7 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
       {session.players.map((player, i) => {
         const latest = history.at(-1);
         const value = latest?.prices[player.seat];
-        return <g key={player.seat}><path d={paths[i]} stroke={LINE_COLORS[player.seat % LINE_COLORS.length]} fill="none" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />{value != null && latest ? <circle cx={x(latest.tick)} cy={y(value)} r="3" fill={LINE_COLORS[player.seat % LINE_COLORS.length]} stroke="#fffefa" strokeWidth="1" /> : null}</g>;
+        return <g key={player.seat}><path d={paths[i]} stroke={LINE_COLORS[player.seat % LINE_COLORS.length]} fill="none" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />{value != null && latest ? <circle cx={x(latest.tick)} cy={y(value)} r="3" fill={LINE_COLORS[player.seat % LINE_COLORS.length]} stroke="#ffffff" strokeWidth="1" /> : null}</g>;
       })}
       <text className="chart-axis-label" x={LEFT} y={HEIGHT - 5}>{firstTick}s</text>
       {lastTick > firstTick ? <text className="chart-axis-label" x={RIGHT} y={HEIGHT - 5} textAnchor="end">{lastTick}s</text> : null}

@@ -2,7 +2,7 @@ import type { MarketView } from "../lib/market";
 
 export type GameMode = "practice" | "live";
 export type Profile = { username: string; rankedStarts: number; remainingAttempts: number };
-export type ModelInfo = { seat: number; name: string; modelId: string; description: string };
+export type ModelInfo = { seat: number; name: string; modelId: string };
 export type LeaderboardEntry = { rank: number; username: string; pnl: number; completedRuns: number; mode: GameMode; isYou: boolean };
 export type Bootstrap = {
   authenticated: boolean;
@@ -17,7 +17,7 @@ export type Bootstrap = {
   activeSessionId: string | null;
 };
 export type PlayerView = {
-  seat: number; name: string; modelId: string; description: string;
+  seat: number; name: string; modelId: string; classId: string; className: string; description: string;
   stack: number; cards: string[]; bet: number; contributed: number;
   folded: boolean; allIn: boolean; lastAction: string;
 };

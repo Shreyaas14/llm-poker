@@ -25,16 +25,22 @@ export type PokerState = {
   pot: number; currentBet: number; minRaise: number; pending: number[];
   actedAt: number[]; history: PokerEvent[]; winners: number[]; payouts: number[];
   mainPotWinners: number[]; mainPotShares: number[]; pots: Pot[]; revision: number;
+  // Kept for all five hands; absent in older saved games with fixed seat styles.
+  classIds?: ClassId[];
 };
-export type Style = { id: string; name: string; description: string };
+export type ClassId = 'disciplined' | 'pressure' | 'patient' | 'unpredictable';
+export type Style = { id: ClassId; name: string; description: string };
 export const STYLES: readonly Style[] = [
-  { id: 'disciplined', name: 'The Analyst', description: 'Selective before the flop. Values position, strong draws, and measured bets.' },
-  { id: 'pressure', name: 'The Challenger', description: 'Applies pressure with a wider range. Will bluff when opponents show weakness.' },
-  { id: 'patient', name: 'The Sentinel', description: 'Patient and selective. Tends to protect chips, then commits with conviction.' },
-  { id: 'unpredictable', name: 'The Wildcard', description: 'Plays a wide range with varied sizing. Mixes bold bluffs with unexpected slow plays.' },
+  { id: 'disciplined', name: 'Analyst', description: 'Selective hands, measured bets.' },
+  { id: 'pressure', name: 'Challenger', description: 'Wide ranges, pressure, frequent bluffs.' },
+  { id: 'patient', name: 'Sentinel', description: 'Patient play, strong-hand commitment.' },
+  { id: 'unpredictable', name: 'Wildcard', description: 'Bold bluffs, varied bets, surprise slow plays.' },
 ];
 export const STYLE = STYLES;
 export const PROVIDERS = ['GPT', 'Claude', 'Gemini', 'Grok'] as const;
+export function assignedStyle(state: Pick<PokerState, 'classIds'>, seat: number): Style {
+  return STYLES.find(style => style.id === state.classIds?.[seat]) ?? STYLES[seat];
+}
 export type Observation = {
   seat: number; name: string; hole: Card[]; board: Card[]; street: Street;
   button: number; smallBlind: number; bigBlind: number; pot: number; currentBet: number;
@@ -98,14 +104,21 @@ function randomStream(seed: number | string): () => number {
     return block[cursor++];
   };
 }
-export function shuffledDeck(seed: number | string, cards: Card[] = fullDeck()): Card[] {
-  const deck = [...cards], random = randomStream(seed);
-  for (let i = deck.length - 1; i > 0; i--) {
+function shuffled<T>(seed: number | string, items: readonly T[]): T[] {
+  const result = [...items], random = randomStream(seed);
+  for (let i = result.length - 1; i > 0; i--) {
     const size = i + 1, limit = Math.floor(4294967296 / size) * size;
     let draw = random(); while (draw >= limit) draw = random();
-    const j = draw % size; [deck[i], deck[j]] = [deck[j], deck[i]];
+    const j = draw % size; [result[i], result[j]] = [result[j], result[i]];
   }
-  return deck;
+  return result;
+}
+export function shuffledDeck(seed: number | string, cards: Card[] = fullDeck()): Card[] {
+  return shuffled(seed, cards);
+}
+/** A new game's provider-to-class assignment, independent of its dealt cards. */
+export function shuffledClasses(seed: number | string): ClassId[] {
+  return shuffled(seed, STYLES.map(style => style.id));
 }
 
 /** Direct 5–7 card rank, category followed by five base-15 tiebreak digits. */
@@ -170,14 +183,15 @@ function pay(state: PokerState, seat: number, amount: number): void {
   player.stack -= amount; player.bet += amount; player.contributed += amount;
   player.allIn = player.stack === 0; state.pot += amount;
 }
-export function createHand(seed: number | string, button: number, startingStack = 1000): PokerState {
+export function createHand(seed: number | string, button: number, startingStack = 1000, classIds: readonly ClassId[] = STYLES.map(style => style.id)): PokerState {
   if (!Number.isSafeInteger(startingStack) || startingStack < 10) throw new Error('Starting stack must be an integer of at least 10');
   if (!Number.isInteger(button) || button < 0 || button > 3) throw new Error('Button must be a seat from 0 to 3');
+  if (classIds.length !== 4 || new Set(classIds).size !== 4 || classIds.some(id => !STYLES.some(style => style.id === id))) throw new Error('A game must assign each playing class once');
   const deck = shuffledDeck(seed);
   const players: Player[] = PROVIDERS.map((name, seat) => ({ seat, name, stack: startingStack, hole: [], folded: false, allIn: false, bet: 0, contributed: 0, lastAction: '' }));
   for (let round = 0; round < 2; round++) for (const seat of seatOrder(button)) players[seat].hole.push(deck.pop()!);
   const state: PokerState = {
-    seed, deck, button, smallBlind: 5, bigBlind: 10, street: 'preflop', board: [], players,
+    seed, deck, button, classIds: [...classIds], smallBlind: 5, bigBlind: 10, street: 'preflop', board: [], players,
     actor: null, pot: 0, currentBet: 10, minRaise: 10, pending: [], actedAt: [-1, -1, -1, -1],
     history: [], winners: [], payouts: [0, 0, 0, 0], mainPotWinners: [], mainPotShares: [0, 0, 0, 0], pots: [], revision: 0,
   };
@@ -320,12 +334,12 @@ export function getObservation(state: PokerState, seat: number): Observation {
     players: state.players.map(p => ({ seat: p.seat, name: p.name, stack: p.stack,
       folded: p.folded, allIn: p.allIn, bet: p.bet, contributed: p.contributed, lastAction: p.lastAction })),
     legal: state.actor === seat ? legalActions(state) : { canFold: false, canCheck: false, canCall: false, canRaise: false, callAmount: 0, minRaiseTo: null, maxRaiseTo: 0 },
-    history: state.history, style: STYLES[seat],
+    history: state.history, style: assignedStyle(state, seat),
   });
 }
 export function getSpectator(state: PokerState): SpectatorState {
   return clone({
-    button: state.button, smallBlind: state.smallBlind, bigBlind: state.bigBlind,
+    button: state.button, classIds: state.players.map(player => assignedStyle(state, player.seat).id), smallBlind: state.smallBlind, bigBlind: state.bigBlind,
     street: state.street, board: state.board, players: state.players, actor: state.actor,
     pot: state.pot, currentBet: state.currentBet, minRaise: state.minRaise,
     history: state.history, winners: state.winners, payouts: state.payouts,
@@ -372,7 +386,8 @@ function strength(observation: Observation): number {
  * only an Observation, so it cannot peek at opponents' cards or the runout. */
 export function decidePractice(observation: Observation, seed: number): Action {
   const random = randomStream(seed), roll = () => random() / 4294967296;
-  const legal = observation.legal, policy = POLICIES[observation.seat];
+  const legal = observation.legal, policy = POLICIES[STYLES.findIndex(style => style.id === observation.style.id)];
+  if (!policy) throw new Error('Unknown playing class');
   const own = observation.players[observation.seat];
   const live = observation.players.filter(player => !player.folded).length;
   const value = strength(observation) + policy.loose - Math.max(0, live - 2) * 0.035;

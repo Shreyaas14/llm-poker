@@ -168,3 +168,80 @@ test("event repricing keeps human inventory and does not reset outstanding funde
   assert.equal(state.orders.find(o => o.id === placed.result.orderId)?.remaining, 4);
   assertLedger(state);
 });
+
+test("trader positions expose actual inventory and named executed fills, not quote changes", () => {
+  let state = createMarket([0.4, 0.3, 0.2, 0.1], 42);
+  state.orders = [];
+  const before = getMarketView(state);
+  assert.equal(before.traderPositions.length, 16);
+  for (const trader of before.traderPositions) {
+    assert.deepEqual(trader.holdings, state.accounts[trader.id].shares);
+    assert.deepEqual(trader.netFilledShares, trader.holdings.map(quantity => quantity - trader.initialSharesPerOutcome));
+  }
+  state = placeHumanOrder(state, { outcome: 0, side: "buy", quantity: 10, limitPrice: 0.01, orderType: "limit" }).state;
+  assert.equal(getMarketView(state).books[0].bestBid, 0.01, "a real new quote changes the book");
+  assert.deepEqual(getMarketView(state).traderPositions, before.traderPositions, "quoting does not change holdings or fill flow");
+  addOrder(state, "trader-0", "sell", 30, 7);
+  const order = placeHumanOrder(state, { outcome: 0, side: "buy", quantity: 5, limitPrice: 0.3, orderType: "ioc" });
+  const after = getMarketView(order.state);
+  assert.equal(after.traderPositions[0].holdings[0], before.traderPositions[0].holdings[0] - 5);
+  assert.equal(after.traderPositions[0].netFilledShares![0], before.traderPositions[0].netFilledShares![0] - 5);
+  assert.equal(after.traderPositions[0].openOrders, 1, "the two unfilled shares remain an order, not a new position");
+  assert.equal(after.positions[0].quantity, 5);
+  assert.deepEqual(after.recentTrades[0].buyer, { id: "human", name: "You" });
+  assert.deepEqual(after.recentTrades[0].seller, { id: "trader-0", name: "Maker 1" });
+  assert.equal(after.recentTrades[0].quantity, 5);
+  assert.equal(after.recentTrades[0].price, 0.3);
+  assert.deepEqual(after.fills[0], order.result.fills[0], "existing public fill contracts remain compatible");
+  assert.equal(after.fills[0].buyer, "you");
+  assert.equal(after.fills[0].seller, "market");
+  assertLedger(order.state);
+});
+
+test("net trader flow reconciles all actual fills even after the recent tape is truncated", () => {
+  let state = createMarket([0.4, 0.3, 0.2, 0.1], 123);
+  const net = Object.fromEntries(state.traders.map(trader => [trader.id, [0, 0, 0, 0]]));
+  const seen = new Set<string>();
+  for (let tick = 0; tick < 250; tick++) {
+    if (tick) state = advanceMarket(state, tick === 100 ? [0.1, 0.6, 0.2, 0.1] : undefined);
+    for (const fill of state.fills) {
+      if (seen.has(fill.id)) continue;
+      seen.add(fill.id);
+      net[fill.buyer][fill.outcome] += fill.quantity;
+      net[fill.seller][fill.outcome] -= fill.quantity;
+    }
+  }
+  assert.ok(seen.size > 250, "the test exceeds the retained tape");
+  const view = getMarketView(state);
+  for (const trader of view.traderPositions) assert.deepEqual(trader.netFilledShares, net[trader.id]);
+  assert.ok(view.traderPositions.some(trader => trader.netFilledShares!.some(quantity => quantity !== 0)), "synthetic traders have taken positions against each other");
+  assert.equal(view.recentTrades.length, 20);
+  assertLedger(state);
+});
+
+test("settled trader holdings are redeemed without misreporting redemption as filled sales", () => {
+  const state = advanceMarket(createMarket([0.4, 0.3, 0.2, 0.1], 9), undefined, 20);
+  const before = getMarketView(state);
+  const settled = settleMarket(state, [0, 1, 0, 0]);
+  const after = getMarketView(settled);
+  assert.deepEqual(after.traderPositions.map(trader => trader.netFilledShares), before.traderPositions.map(trader => trader.netFilledShares));
+  assert.ok(after.traderPositions.every(trader => trader.holdings.every(quantity => quantity === 0) && trader.openOrders === 0));
+  assert.deepEqual(after.recentTrades, before.recentTrades);
+  const legacy = structuredClone(settled);
+  for (const account of Object.values(legacy.accounts)) delete account.settlementHoldings;
+  assert.ok(getMarketView(legacy).traderPositions.every(trader => trader.netFilledShares === null), "old settled sessions cannot invent unavailable net trades");
+  assertLedger(settled);
+});
+
+test("trader visibility is a detached public projection with no private trading inputs", () => {
+  const state = createMarket([0.4, 0.3, 0.2, 0.1], 19);
+  const original = JSON.stringify(state);
+  const view = getMarketView(state);
+  const serialized = JSON.stringify(view);
+  for (const key of ["rngState", "values", "accounts", "traders", "bias", "beliefs", "reaction", "nextWake", "cashUnits", "settlementHoldings"]) assert.ok(!serialized.includes(`"${key}"`), `${key} stays private`);
+  assert.deepEqual(Object.keys(view.traderPositions[0]).sort(), ["holdings", "id", "initialSharesPerOutcome", "kind", "name", "netFilledShares", "openOrders"].sort());
+  view.traderPositions[0].holdings[0] = -1;
+  view.traderPositions[0].netFilledShares![0] = -1;
+  if (view.recentTrades[0]) view.recentTrades[0].buyer.name = "Changed";
+  assert.equal(JSON.stringify(state), original);
+});

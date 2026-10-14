@@ -4,7 +4,7 @@ import { getChatGPTUser } from "../app/chatgpt-auth";
 import { GameError, commandGame, createGame, viewGame } from "./game";
 import type { Game } from "./game";
 import { DEFAULT_MODELS, ProviderError, requestDecision } from "./providers";
-import { PROVIDERS, STYLES } from "./poker";
+import { PROVIDERS } from "./poker";
 import type { Bootstrap, CommandRequest, GameMode, LeaderboardEntry, Profile, SessionView } from "../app/types";
 import { z } from "zod";
 
@@ -57,7 +57,7 @@ async function activeRow(id: string) {
 export async function bootstrap(who: Identity): Promise<Bootstrap> {
   const [profile, leaderboard, practiceLeaderboard, active] = await Promise.all([profileFor(who.id),board("live",who.id),board("practice",who.id),activeRow(who.id)]);
   return {authenticated:who.authenticated, profile, liveAvailable:liveReady(), liveUnavailableReason:liveReady() ? null : "Live model access is awaiting activation. Practice is ready to play.",
-    models:modelIds().map((modelId,seat)=>({seat,name:PROVIDERS[seat],modelId,description:STYLES[seat].description})),
+    models:modelIds().map((modelId,seat)=>({seat,name:PROVIDERS[seat],modelId})),
     leaderboard, practiceLeaderboard, ...weekWindow(), activeSessionId:active?.id??null};
 }
 export async function saveProfile(who: Identity, body: unknown): Promise<Profile> {

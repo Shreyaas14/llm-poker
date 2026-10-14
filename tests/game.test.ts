@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { commandGame, createGame, catchUp, GameError, TRADING_WINDOW_MS, viewGame } from "../lib/game.ts";
 import type { Game, LiveDecision } from "../lib/game.ts";
-import { createHand, estimateValues, fullDeck } from "../lib/poker.ts";
+import { createHand, estimateValues, fullDeck, STYLES } from "../lib/poker.ts";
 import type { Observation } from "../lib/poker.ts";
 import { createMarket, getMarketView, UNITS_PER_CREDIT } from "../lib/market.ts";
 
@@ -39,6 +39,12 @@ test("new game starts with four real seats, five-hand target, and a private futu
   assert.equal(view.players.length, 4); assert.deepEqual(view.board, []);
   assert.equal(new Set(view.players.flatMap(p => p.cards)).size, 8);
   assert.ok(view.players.every(p => p.modelId === "Practice decision model"));
+  assert.deepEqual([...game.poker.classIds!].sort(), STYLES.map(style => style.id).sort());
+  assert.deepEqual(view.players.map(player => player.classId), game.poker.classIds);
+  for (const player of view.players) {
+    const style = STYLES.find(style => style.id === player.classId)!;
+    assert.equal(player.className, style.name); assert.equal(player.description, style.description);
+  }
   assert.equal(view.tradingOpen, true);
   assert.equal(view.odds.method, "monte_carlo"); assert.equal(view.odds.samples, 4096);
   assert.ok(Math.abs(view.odds.equities.reduce((sum, value) => sum + value, 0) - 1) < 1e-12);
@@ -67,15 +73,21 @@ test("five complete hands settle trades, carry cash, rotate dealer, and end the 
   let clock = NOW;
   t.mock.method(Date, "now", () => clock);
   let game = gameFixture();
+  const classIds = STYLES.map(style => style.id).reverse();
+  game.poker.classIds = [...classIds];
   let expectedUnits = 1000 * UNITS_PER_CREDIT;
   const seenModels = new Set<string>();
   const chooser: LiveDecision = async (observation, model) => {
     assertPrivateObservation(observation, game);
+    assert.equal(observation.style.id, classIds[observation.seat]);
     assert.equal(model, game.models[observation.seat]); seenModels.add(model);
     return foldIfPossible(observation, model);
   };
   for (let hand = 1; hand <= 5; hand++) {
     assert.equal(game.hand, hand);
+    game = JSON.parse(JSON.stringify(game)) as Game;
+    assert.deepEqual(game.poker.classIds, classIds, "classes survive reload and remain fixed across all five hands");
+    assert.deepEqual(viewGame(game, false, clock).players.map(player => player.classId), classIds);
     assert.equal(game.market.accounts.human.cashUnits, expectedUnits);
     assert.equal(game.cashBefore, expectedUnits / UNITS_PER_CREDIT);
     const guaranteedWinner = (game.poker.button + 2) % 4;
@@ -131,6 +143,21 @@ test("five complete hands settle trades, carry cash, rotate dealer, and end the 
   assert.equal(view.pnl, expectedUnits / UNITS_PER_CREDIT - 1000);
   assert.equal(seenModels.size, 4);
   await assert.rejects(commandGame(game, { type: "next_hand", pokerRevision: game.poker.revision }, clock), /not ready/);
+});
+
+test("legacy saved games keep their original classes through views and the next hand", async () => {
+  let game = gameFixture();
+  delete game.poker.classIds;
+  const originalIds = STYLES.map(style => style.id);
+  assert.deepEqual(viewGame(game, false, NOW).players.map(player => player.classId), originalIds);
+  while (game.poker.street !== "complete") {
+    game = await commandGame(game, { type: "advance", pokerRevision: game.poker.revision }, NOW, async (observation, model) => {
+      assert.equal(observation.style.id, originalIds[observation.seat]);
+      return foldIfPossible(observation, model);
+    });
+  }
+  game = await commandGame(game, { type: "next_hand", pokerRevision: game.poker.revision }, NOW);
+  assert.deepEqual(game.poker.classIds, originalIds);
 });
 
 test("stale orders and stale poker actions reject without touching the supplied state", async () => {

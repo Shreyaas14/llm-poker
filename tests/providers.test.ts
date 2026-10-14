@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_MODELS, parseDecision, ProviderError, requestDecision } from "../lib/providers.ts";
-import { createHand, getObservation } from "../lib/poker.ts";
+import { createHand, getObservation, STYLES } from "../lib/poker.ts";
 
-const hand = createHand(182, 0);
+const hand = createHand(182, 0, 1000, STYLES.map(style => style.id).reverse());
 const observation = getObservation(hand, hand.actor!);
 const key = "unit-test-key-never-sent-to-a-network";
 const responseWith = (content: string, extra: Record<string, unknown> = {}) => Response.json({ choices: [{ finish_reason: "stop", message: { content }, ...extra }] });
@@ -26,6 +26,8 @@ test("all four providers receive only the seat observation, strict JSON instruct
     return responseWith('{"action":"call","raiseTo":null}');
   });
   for (const model of DEFAULT_MODELS) assert.deepEqual(await requestDecision(observation, model, key), { type: "call" });
+  assert.equal(observation.style.id, hand.classIds![observation.seat]);
+  assert.notEqual(observation.style.id, STYLES[observation.seat].id, "the request carries the assigned class, not the old provider default");
   assert.equal(captured.length, 4);
   for (let i = 0; i < captured.length; i++) {
     const { url, init, body } = captured[i];

@@ -1,4 +1,4 @@
-# River Market
+# VESPER
 
 A play-money prediction market around four AI poker players. The human watches all dealt cards and trades outcome shares; the human never occupies a poker seat. Built with React, TypeScript, Vinext, Cloudflare D1, and Sites authentication/hosting.
 
@@ -6,8 +6,10 @@ A play-money prediction market around four AI poker players. The human watches a
 
 - Five independent four-seat no-limit Texas Hold'em hands; 1,000 poker chips per seat, rotating dealer, 5/10 blinds. The human starts with 1,000 trading credits and carries settled cash between hands.
 - Each model sees only its own hole cards, public action history, board, and legal actions. The server deals from a secret 256-bit seed and validates every action. No model has tools or direct state access.
+- Four playing classes are randomly shuffled across the providers for each new challenge and persist across all five hands. The assigned class drives live prompts, practice decisions, and forecast rollouts. Legacy saved sessions keep their original assignments. Class badges provide a short hover, focus, or tap description.
 - The spectator and synthetic market traders know all dealt hole cards. Future board cards and shuffle seeds remain server-only.
 - Sixteen funded traders place real limit orders into four books. Trades use price-time priority, partial fills, reserved cash/shares, and finite depth. New prices come from orders and executions, not a chart script. Human orders are bound to the observed poker revision.
+- The trader panel shows actual holdings and net filled shares for all 16 synthetic traders, plus named buyer/seller executions. Opening complete-set inventories (700 shares per outcome for makers, 240 for other traders) are distinguished from purchases. Quotes and open orders do not change holdings until matched; settlement redeems holdings.
 - Each contract pays 1 credit for the sole main-pot winner, 1/k for each of k tied main-pot winners, and 0 otherwise. Side pots do not determine contracts. Fully collateralized complete sets back every share; integer settlement units preserve thirds exactly.
 - New games advance automatically after 6 seconds (Normal) or 3 seconds (Fast), with a four-second settlement pause between hands. Pause/Play and Next action remain available. Trade-ticket interaction, navigation, hidden tabs, and request errors pause automatic play; resumed sessions start paused. A model request already in flight completes before pausing.
 - Each poker action opens a maximum 45-second trading window; pausing playback does not extend it, so a paused table cannot generate unlimited background trading. Orders can rest across poker actions, and are cancelled at settlement.
