@@ -9,7 +9,8 @@ A play-money prediction market around four AI poker players. The human watches a
 - The spectator and synthetic market traders know all dealt hole cards. Future board cards and shuffle seeds remain server-only.
 - Sixteen funded traders place real limit orders into four books. Trades use price-time priority, partial fills, reserved cash/shares, and finite depth. New prices come from orders and executions, not a chart script. Human orders are bound to the observed poker revision.
 - Each contract pays 1 credit for the sole main-pot winner, 1/k for each of k tied main-pot winners, and 0 otherwise. Side pots do not determine contracts. Fully collateralized complete sets back every share; integer settlement units preserve thirds exactly.
-- Each poker action opens a 45-second trading window. The viewer chooses Next action; a paused table cannot generate unlimited background trading. Orders can rest across poker actions, and are cancelled at settlement.
+- New games advance automatically after 6 seconds (Normal) or 3 seconds (Fast), with a four-second settlement pause between hands. Pause/Play and Next action remain available. Trade-ticket interaction, navigation, hidden tabs, and request errors pause automatic play; resumed sessions start paused. A model request already in flight completes before pausing.
+- Each poker action opens a maximum 45-second trading window; pausing playback does not extend it, so a paused table cannot generate unlimited background trading. Orders can rest across poker actions, and are cancelled at settlement.
 - Final PnL is settled cash minus 1,000. Live account value walks available external bids; shares lacking bids are marked at zero. Quotes are executable prices, not guaranteed probabilities.
 - Sign in with ChatGPT, choose a unique username, and opt into ranked play. The best completed score among the first three ranked starts counts each UTC week starting Monday. The three starts are shared across the separate practice/live boards. Abandoned runs consume a start. Prior weeks remain stored.
 
@@ -18,6 +19,10 @@ A play-money prediction market around four AI poker players. The human watches a
 After each poker event, 512 rollouts estimate expected main-pot contract payout under the style-based practice policies. Each simulated poker decision is made through its own private observation. Rollouts independently resample unknown future cards; they never inspect the real future deck. Synthetic traders interpret this estimate differently, react at different times, and manage finite inventories.
 
 These forecasts are a behavior surrogate for live LLMs, not a measured calibration of GPT, Claude, Gemini, or Grok. At 512 samples, a single binary probability has worst-case Monte Carlo standard error around 2.2 percentage points; policy error is additional. Tests include exact fixtures and convergence toward 4,096-sample references. Live calibration, held-out probability scoring, and richer trader policies are future work.
+
+The displayed **showdown equity** is a separate card calculation: expected main-pot share if no remaining player folds. All dealt hole cards, including folded dead cards, are removed from possible runouts. Flop, turn, and river enumerate every possible remaining board; preflop uses 4,096 deterministic Monte Carlo samples seeded only by visible cards (worst-case standard error 0.78 percentage points). Ties split equity; settled hands display actual payouts. Results cache by visible cards and eligibility, never by the secret future deck.
+
+The four-line percentage chart plots real book midpoints, or the latest trade when a two-sided quote is unavailable. It preserves missing-data gaps and resets with each hand. The visible CLOB shows executable bid/ask levels, quantities, and volume bars. These market prices can differ from card equity because the market also models future betting and folds.
 
 Research and architecture notes: [Poker prediction market research and implementation spec](https://chatgpt.com/space/page_86bb73e8120481918fd9e90f936aace4).
 
@@ -47,6 +52,7 @@ Unit tests cover rule edge cases, 500 randomized hands, independent ChaCha20 com
 | Path | Purpose |
 | --- | --- |
 | `lib/poker.ts` | Authoritative rules, evaluation, private observations, practice policies, forecasts |
+| `lib/equity.ts` | Independent mathematical showdown equity and visible-state cache key |
 | `lib/market.ts` | Funded exchange, synthetic traders, exact settlement ledger |
 | `lib/game.ts` | Five-hand orchestration and safe spectator projection |
 | `lib/providers.ts` | Server-only structured model decisions |

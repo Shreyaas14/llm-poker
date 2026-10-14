@@ -2,8 +2,9 @@ import { createHand, applyAction, getObservation, decidePractice, estimateValues
 import type { PokerState, Action } from "./poker.ts";
 import { createMarket, advanceMarket, placeHumanOrder, cancelHumanOrder, settleMarket, getMarketView } from "./market.ts";
 import type { MarketState } from "./market.ts";
-import type { Activity, GameMode, HandResult, SessionCommand, SessionView } from "../app/types.ts";
+import type { Activity, GameMode, HandResult, SessionCommand, SessionView, ShowdownOdds } from "../app/types.ts";
 import { DEFAULT_MODELS } from "./providers.ts";
+import { equityKey, showdownEquity } from "./equity.ts";
 
 export const RULES_VERSION = "river-1";
 export const TRADING_WINDOW_MS = 45000;
@@ -13,7 +14,26 @@ export type Game = {
   results: HandResult[]; activity: Activity[]; sequence: number; version: number;
   cashBefore: number; eventUntil: number; lastTickAt: number; values: number[];
   requestIds: string[]; createdAt: number; notice: string | null; providerCalls: number;
+  // Optional for saved sessions created before card equity was introduced.
+  odds?: ShowdownOdds; oddsKey?: string;
 };
+// Old persisted sessions hydrate lazily; this bounded cache also covers repeated
+// reads before their first command persists the new fields. Normal sessions
+// carry the estimate in their saved snapshot, so market ticks do no sampling.
+const equityCache = new Map<string, ShowdownOdds>();
+function ensureOdds(game: Game): ShowdownOdds {
+  const key = equityKey(game.poker);
+  if (game.odds && game.oddsKey === key) return game.odds;
+  let odds = equityCache.get(key);
+  if (!odds) {
+    odds = showdownEquity(game.poker);
+    if (equityCache.size >= 128) equityCache.delete(equityCache.keys().next().value!);
+    equityCache.set(key, odds);
+  }
+  game.odds = { ...odds, equities: [...odds.equities] };
+  game.oddsKey = key;
+  return game.odds;
+}
 export class GameError extends Error {
   status: number;
   code: string;
@@ -37,6 +57,7 @@ export function createGame(id: string, mode: GameMode, ranked: boolean, now = Da
     eventUntil: now + TRADING_WINDOW_MS, lastTickAt: now, values,
     requestIds: [], createdAt: now, notice: null, providerCalls: 0,
   };
+  ensureOdds(game);
   log(game, mode === "live" ? "Four independent model seats are ready. You trade the outcome." : "Practice decision models are ready. You trade the outcome.", "system", now);
   return game;
 }
@@ -53,6 +74,7 @@ export function catchUp(game: Game, now: number) {
 export type LiveDecision = (observation: ReturnType<typeof getObservation>, model: string, feedback?: string) => Promise<Action>;
 export async function commandGame(source: Game, command: SessionCommand, now: number, chooseLive?: LiveDecision): Promise<Game> {
   const game = structuredClone(source);
+  ensureOdds(game);
   catchUp(game, now);
   if (command.type === "tick") return game;
   if (command.type === "order") {
@@ -81,6 +103,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     game.poker = createHand(randomSeed(), (game.poker.button + 1) % 4, 1000);
     // Make the client guard unique across hands, including otherwise-identical preflop revisions.
     game.poker.revision += game.hand * 10000;
+    ensureOdds(game);
     game.values = estimateValues(game.poker, randomNumber(), 512);
     game.market = createMarket(game.values, randomNumber(), game.cashBefore);
     game.eventUntil = now + TRADING_WINDOW_MS;
@@ -105,6 +128,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   } else action = decidePractice(observation, randomNumber());
   const oldStreet = game.poker.street;
   game.poker = applyAction(game.poker, action);
+  ensureOdds(game);
   const name = game.poker.players[actor].name;
   log(game, `${name} ${action.type === "raise" ? `raises to ${action.amount}` : action.type === "call" ? "calls" : action.type === "fold" ? "folds" : "checks"}.`, "poker", now);
   if (game.poker.street !== oldStreet && game.poker.street !== "complete") log(game, `${game.poker.street[0].toUpperCase()}${game.poker.street.slice(1)} revealed.`, "poker", now);
@@ -126,6 +150,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   return game;
 }
 export function viewGame(game: Game, busy = false, now = Date.now()): SessionView {
+  const odds = ensureOdds(game);
   const market = getMarketView(game.market);
   const ended = !isPlaying(game);
   return {
@@ -137,7 +162,7 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
     button: game.poker.button, pot: game.poker.pot,
     players: game.poker.players.map(p => ({ seat: p.seat, name: p.name, modelId: game.mode === "live" ? game.models[p.seat] : "Practice decision model", description: STYLE[p.seat].description, stack: p.stack, cards: [...p.hole], bet: p.bet, contributed: p.contributed, folded: p.folded, allIn: p.allIn, lastAction: p.lastAction })),
     winners: [...game.poker.mainPotWinners], winningCards: ended && game.poker.board.length === 5 ? [...new Set(game.poker.mainPotWinners.flatMap(seat => evaluateHand([...game.poker.players[seat].hole, ...game.poker.board]).cards))] : [],
-    market, results: game.results, activity: game.activity,
+    market, odds: { ...odds, equities: [...odds.equities] }, results: game.results, activity: game.activity,
     pnl: ended ? market.cash - 1000 : market.totalLiquidationValue - 1000,
     tradingOpen: !ended && !busy && now < game.eventUntil,
     marketSecondsRemaining: Math.max(0, Math.ceil((game.eventUntil - now) / 1000)),

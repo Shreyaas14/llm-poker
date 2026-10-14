@@ -23,6 +23,7 @@ export type PlayerView = {
 };
 export type Activity = { id: string; hand: number; text: string; kind: "poker" | "trade" | "system"; at: string };
 export type HandResult = { hand: number; winners: number[]; payout: number[]; cashBefore: number; cashAfter: number; pnl: number; description: string };
+export type ShowdownOdds = { equities: number[]; method: "exact" | "monte_carlo"; samples: number; standardError: number };
 export type SessionView = {
   id: string; version: number; pokerRevision: number; mode: GameMode;
   status: "playing" | "hand_complete" | "complete";
@@ -31,7 +32,7 @@ export type SessionView = {
   street: "preflop" | "flop" | "turn" | "river" | "complete";
   board: string[]; players: PlayerView[]; actor: number | null;
   button: number; pot: number; winners: number[]; winningCards: string[];
-  market: MarketView; results: HandResult[]; activity: Activity[];
+  market: MarketView; odds: ShowdownOdds; results: HandResult[]; activity: Activity[];
   pnl: number; tradingOpen: boolean; marketSecondsRemaining: number;
 };
 export type SessionCommand =

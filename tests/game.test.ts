@@ -40,7 +40,27 @@ test("new game starts with four real seats, five-hand target, and a private futu
   assert.equal(new Set(view.players.flatMap(p => p.cards)).size, 8);
   assert.ok(view.players.every(p => p.modelId === "Practice decision model"));
   assert.equal(view.tradingOpen, true);
+  assert.equal(view.odds.method, "monte_carlo"); assert.equal(view.odds.samples, 4096);
+  assert.ok(Math.abs(view.odds.equities.reduce((sum, value) => sum + value, 0) - 1) < 1e-12);
   for (const field of ["deck", "seed", "rngState", "beliefs", "accounts"]) assert.ok(!JSON.stringify(view).includes(`"${field}"`));
+});
+
+test("saved games hydrate card equity once and retain it across views and market ticks", async () => {
+  const game = gameFixture();
+  assert.equal("odds" in game, false, "fixture represents a pre-equity saved session");
+  const firstView = viewGame(game, false, NOW), savedOdds = game.odds, savedKey = game.oddsKey;
+  assert.ok(savedOdds); assert.ok(savedKey);
+  assert.deepEqual(viewGame(game, false, NOW).odds, firstView.odds);
+  assert.equal(game.odds, savedOdds, "repeated views reuse the stored calculation");
+  firstView.odds.equities[0] = -1;
+  assert.ok(savedOdds.equities[0] >= 0, "the response cannot mutate the stored cache");
+  const ticked = await commandGame(game, { type: "tick" }, NOW + 1000);
+  assert.deepEqual(ticked.odds, savedOdds); assert.equal(ticked.oddsKey, savedKey);
+  const restored = JSON.parse(JSON.stringify(ticked)) as Game;
+  assert.deepEqual(viewGame(restored, false, NOW + 1000).odds, savedOdds);
+  const advanced = await commandGame(restored, { type: "advance", pokerRevision: restored.poker.revision }, NOW + 1000, foldIfPossible);
+  assert.notEqual(advanced.oddsKey, savedKey);
+  assert.equal(advanced.odds?.equities[game.poker.actor!], 0, "a fold refreshes eligibility");
 });
 
 test("five complete hands settle trades, carry cash, rotate dealer, and end the run", async t => {
@@ -65,10 +85,18 @@ test("five complete hands settle trades, carry cash, rotate dealer, and end the 
     const sellBook = getMarketView(game.market).books.find(book => book.outcome !== guaranteedWinner && book.bestAsk !== null);
     assert.ok(sellBook);
     const quantity = 2;
+    // New hands use random funded books. The best ask can contain only one
+    // share; an IOC at that price must cancel the unfilled remainder.
+    const expectedFill = Math.min(quantity, sellBook.asks[0].quantity);
+    assert.ok(expectedFill > 0);
+    const expectedCostUnits = expectedFill * Math.round(sellBook.bestAsk! * 100) * (UNITS_PER_CREDIT / 100);
     game = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
       outcome: sellBook.outcome, side: "buy", quantity, limitPrice: sellBook.bestAsk!, orderType: "ioc" }, clock);
-    assert.equal(game.market.accounts.human.shares[sellBook.outcome], quantity);
-    expectedUnits = game.market.accounts.human.cashUnits;
+    assert.equal(game.market.accounts.human.shares[sellBook.outcome], expectedFill);
+    expectedUnits -= expectedCostUnits;
+    assert.equal(game.market.accounts.human.cashUnits, expectedUnits);
+    assert.equal(getMarketView(game.market).reservedCash, 0, "IOC remainder reserves no cash");
+    assert.equal(getMarketView(game.market).openOrders.length, 0, "IOC remainder does not rest");
     let actionCount = 0;
     while (game.poker.street !== "complete") {
       assert.ok(++actionCount <= 4);
@@ -83,6 +111,7 @@ test("five complete hands settle trades, carry cash, rotate dealer, and end the 
     assert.deepEqual(game.poker.mainPotWinners, [guaranteedWinner]);
     assert.equal(game.market.status, "settled");
     assert.equal(game.market.accounts.human.cashUnits, expectedUnits);
+    assert.deepEqual(game.market.accounts.human.shares, [0, 0, 0, 0], "settlement extinguishes every contract");
     assert.equal(game.market.collateralUnits, 0);
     assert.equal(game.market.orders.length, 0);
     assert.equal(game.results.length, hand);
@@ -195,6 +224,7 @@ test("a tied river settles fractional main-pot shares and cannot reopen the mark
   const cashBeforeSettlement = bought.market.accounts.human.cashUnits;
   const settled = await commandGame(bought, { type: "advance", pokerRevision: bought.poker.revision }, NOW, async () => ({ type: "check" }));
   assert.deepEqual(settled.results[0].payout, [0.25, 0.25, 0.25, 0.25]);
+  assert.deepEqual(viewGame(settled, false, NOW).odds, { equities: [0.25, 0.25, 0.25, 0.25], method: "exact", samples: 1, standardError: 0 });
   assert.equal(settled.market.accounts.human.cashUnits, cashBeforeSettlement + 3 * UNITS_PER_CREDIT / 4);
   assert.equal(settled.market.collateralUnits, 0);
   assert.equal(viewGame(settled, false, NOW).winningCards.length, 5);

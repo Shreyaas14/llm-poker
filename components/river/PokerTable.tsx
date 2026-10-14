@@ -7,10 +7,10 @@ export type TableSeat = {
 };
 
 export const MODEL_SEATS: TableSeat[] = [
-  { id: "gpt", name: "GPT", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Patient. Selective. Picks its moment." },
-  { id: "claude", name: "Claude", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Measured pressure. Comfortable bluffing." },
-  { id: "gemini", name: "Gemini", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Curious. Competitive. Hard to shake." },
-  { id: "grok", name: "Grok", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Unpredictable. Makes you think twice." },
+  { id: "gpt", name: "GPT", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Selective hands and measured bets." },
+  { id: "claude", name: "Claude", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Aggressive bets and occasional bluffs." },
+  { id: "gemini", name: "Gemini", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Tight range and cautious calls." },
+  { id: "grok", name: "Grok", cards: [], stack: 1000, action: "Ready to play", folded: false, active: false, dealer: false, winner: false, description: "Wide range and varied bet sizes." },
 ];
 
 export function ModelMark({ name }: { name: string }) {
@@ -26,10 +26,10 @@ export function PokerTable({ seats, board, pot, street, started, busy, settled, 
     <div className="table-observer"><Eye size={13} /> Spectator view</div>
     <div className="poker-felt"><div className="felt-inner" />
       <div className="board-area">
-        <div className="pot-label">{started ? "TOTAL POT" : "FOUR MINDS. ONE TABLE."}</div>
+        <div className="pot-label">{started ? "TOTAL POT" : "NO-LIMIT HOLD’EM"}</div>
         <div className="pot-value">{started ? <><Layers3 size={18} />{pot.toLocaleString()} <small>chips</small></> : <span className="table-wordmark">River Market</span>}</div>
         <div className="board-cards">{Array.from({ length: 5 }, (_, i) => <PlayingCard key={i} card={board[i]} winning={winningCards.includes(board[i])} ghost />)}</div>
-        <span className="street-label">{!started ? "NO-LIMIT TEXAS HOLD’EM" : busy ? "Models are deciding…" : street.replaceAll("_", " ")}</span>
+        <span className="street-label">{!started ? "NO-LIMIT TEXAS HOLD’EM" : busy ? "Decision pending…" : street.replaceAll("_", " ")}</span>
       </div>
     </div>
     <div className="seats-grid">{seats.map((seat, i) => <article className={`player-seat seat-${i} ${seat.active ? "seat-active" : ""} ${seat.folded ? "seat-folded" : ""} ${seat.winner ? "seat-winner" : ""}`} key={seat.id} aria-label={`${seat.name}${seat.active ? ", acting now" : ""}${seat.folded ? ", folded" : ""}`}>
