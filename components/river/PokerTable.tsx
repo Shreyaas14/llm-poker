@@ -45,11 +45,7 @@ export function PokerTable({ seats, board, pot, street, started, busy, settled, 
     <div className={`table-turn-status ${acting && !settled ? "is-acting" : ""}`} role="status" aria-live="polite">{turnLabel}</div>
     <div className="poker-felt"><div className="felt-inner" />
       <div className="board-area">
-        <h3 className="board-heading">Board <span>Community cards</span></h3>
-        <div className="board-cards">{[{ label: "Flop", indices: [0, 1, 2] }, { label: "Turn", indices: [3] }, { label: "River", indices: [4] }].map(group => <div className={`board-street-group ${group.indices.every(i => !!board[i]) ? "is-dealt" : ""}`} key={group.label} aria-label={`${group.label} cards`}>
-          <div className="board-street-cards">{group.indices.map(i => <PlayingCard key={i} card={board[i]} winning={winningCards.includes(board[i])} ghost />)}</div>
-          <span className="board-street-label">{group.label}</span>
-        </div>)}</div>
+        <div className="board-cards" role="group" aria-label="Community cards">{Array.from({ length: 5 }, (_, i) => <PlayingCard key={i} card={board[i]} winning={winningCards.includes(board[i])} ghost />)}</div>
         <div className="board-pot"><span>Pot</span><Layers3 size={13} aria-hidden="true" /><strong>{pot.toLocaleString()}</strong><span>chips</span></div>
       </div>
     </div>
