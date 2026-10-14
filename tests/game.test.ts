@@ -21,6 +21,21 @@ function gameFixture(mode: "practice" | "live" = "live"): Game {
 }
 const foldIfPossible: LiveDecision = async observation => observation.legal.canFold ? { type: "fold" } : observation.legal.canCheck ? { type: "check" } : { type: "call" };
 
+function tradeFixture(): Game {
+  const game = gameFixture();
+  game.market.orders = []; game.market.fills = []; game.market.traders = [];
+  game.market.values = [0.25, 0.25, 0.25, 0.25];
+  return game;
+}
+
+function addLiquidity(game: Game, side: "buy" | "sell", priceTicks: number, quantity: number): void {
+  const market = game.market;
+  const owner = Object.keys(market.accounts).find(id => id !== "human")!;
+  const sequence = ++market.sequence;
+  market.orders.push({ id: `fixture-${sequence}`, owner, outcome: 1, side, priceTicks,
+    quantity, remaining: quantity, sequence, createdAt: market.tick, expiresAt: null });
+}
+
 function assertPrivateObservation(observation: Observation, game: Game): void {
   assert.deepEqual(observation.hole, game.poker.players[observation.seat].hole);
   assert.ok(observation.players.every(player => !("hole" in player)));
@@ -50,6 +65,85 @@ test("new game starts with four real seats, five-hand target, and a private futu
   assert.equal(view.odds.method, "monte_carlo"); assert.equal(view.odds.samples, 4096);
   assert.ok(Math.abs(view.odds.equities.reduce((sum, value) => sum + value, 0) - 1) < 1e-12);
   for (const field of ["deck", "seed", "rngState", "beliefs", "accounts"]) assert.ok(!JSON.stringify(view).includes(`"${field}"`));
+});
+
+test("partial quick-buy receipt states requested size, actual cost, and canceled remainder", async () => {
+  const game = tradeFixture();
+  addLiquidity(game, "sell", 32, 4);
+  addLiquidity(game, "sell", 40, 21);
+  const bought = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
+    outcome: 1, side: "buy", quantity: 25, limitPrice: 0.32, orderType: "ioc" }, NOW);
+  const market = getMarketView(bought.market);
+  assert.equal(bought.activity.at(-1)?.text,
+    "Bought 4 of 25 Claude shares at 32.0¢ average. Paid 1.28 credits. 21 unfilled shares canceled.");
+  assert.equal(market.positions[1].quantity, 4);
+  assert.equal(market.cash, 998.72);
+  assert.equal(market.reservedCash, 0);
+  assert.equal(market.openOrders.length, 0);
+  assert.equal(market.books[1].bestAsk, 0.4, "new quote is distinct from the receipt's execution price");
+});
+
+test("full-fill receipt reports the weighted execution price and exact total", async () => {
+  const game = tradeFixture();
+  addLiquidity(game, "sell", 32, 4);
+  addLiquidity(game, "sell", 40, 21);
+  const bought = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
+    outcome: 1, side: "buy", quantity: 25, limitPrice: 0.4, orderType: "ioc" }, NOW);
+  const market = getMarketView(bought.market);
+  assert.equal(bought.activity.at(-1)?.text,
+    "Bought 25 of 25 Claude shares at 38.7¢ average. Paid 9.68 credits.");
+  assert.equal(market.positions[1].quantity, 25);
+  assert.equal(market.cash, 990.32);
+  assert.equal(market.openOrders.length, 0);
+});
+
+test("partial limit receipt distinguishes resting shares from canceled quick-order shares", async () => {
+  const game = tradeFixture();
+  addLiquidity(game, "sell", 32, 4);
+  const bought = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
+    outcome: 1, side: "buy", quantity: 25, limitPrice: 0.32, orderType: "limit" }, NOW);
+  const market = getMarketView(bought.market);
+  assert.equal(bought.activity.at(-1)?.text,
+    "Bought 4 of 25 Claude shares at 32.0¢ average. Paid 1.28 credits. 21 shares remain open at 32¢.");
+  assert.equal(market.positions[1].quantity, 4);
+  assert.equal(market.cash, 998.72);
+  assert.equal(market.reservedCash, 6.72);
+  assert.equal(market.openOrders[0].remainingQuantity, 21);
+});
+
+test("unfilled quick and limit receipts report zero charged and the correct order disposition", async () => {
+  for (const orderType of ["ioc", "limit"] as const) {
+    const game = tradeFixture();
+    addLiquidity(game, "sell", 40, 25);
+    const ordered = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
+      outcome: 1, side: "buy", quantity: 25, limitPrice: 0.32, orderType }, NOW);
+    const market = getMarketView(ordered.market);
+    const disposition = orderType === "ioc" ? "25 unfilled shares canceled." : "25 shares remain open at 32¢.";
+    assert.equal(ordered.activity.at(-1)?.text,
+      `No fill: 0 of 25 Claude shares bought. Paid 0.00 credits. ${disposition}`);
+    assert.equal(market.positions[1].quantity, 0);
+    assert.equal(market.cash, 1000);
+    assert.equal(market.reservedCash, orderType === "ioc" ? 0 : 8);
+    assert.equal(market.openOrders.length, orderType === "ioc" ? 0 : 1);
+  }
+});
+
+test("partial sell receipt reports credits received and leaves unfilled shares owned", async () => {
+  let game = tradeFixture();
+  addLiquidity(game, "sell", 32, 25);
+  game = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
+    outcome: 1, side: "buy", quantity: 25, limitPrice: 0.32, orderType: "ioc" }, NOW);
+  addLiquidity(game, "buy", 40, 4);
+  addLiquidity(game, "buy", 30, 21);
+  const sold = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
+    outcome: 1, side: "sell", quantity: 25, limitPrice: 0.4, orderType: "ioc" }, NOW);
+  const market = getMarketView(sold.market);
+  assert.equal(sold.activity.at(-1)?.text,
+    "Sold 4 of 25 Claude shares at 40.0¢ average. Received 1.60 credits. 21 unfilled shares canceled.");
+  assert.equal(market.positions[1].quantity, 21);
+  assert.equal(market.positions[1].availableQuantity, 21);
+  assert.equal(market.cash, 993.6);
+  assert.equal(market.openOrders.length, 0);
 });
 
 test("saved games hydrate card equity once and retain it across views and market ticks", async () => {

@@ -117,7 +117,9 @@ svg { flex-shrink: 0; }
 .ticket-rules summary { cursor: pointer; width: fit-content; min-height: 26px; }
 .ticket-rules p { margin-top: 6px; }
 .ticket-error { margin-bottom: 12px; font-size: 12px; line-height: 1.6; color: var(--red); }
+.ticket-fill-note { margin: -8px 0 14px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .trade-feedback { margin-top: 15px; padding-left: 10px; border-left: 2px solid var(--green); color: var(--green); font-size: 11px; line-height: 1.6; }
+.trade-feedback-label { display: block; color: var(--muted); font-size: 10px; margin-bottom: 4px; }
 .intro-ticket { padding: 0; }
 .setup-title { font-size: 16px; font-weight: 500; letter-spacing: -.2px; }
 .intro-ticket p { color: var(--muted); font-size: 12px; line-height: 1.7; margin-top: 6px; }
