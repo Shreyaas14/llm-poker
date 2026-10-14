@@ -1,6 +1,6 @@
-import { catchUp } from "./game.ts";
+import { catchUp, viewGame } from "./game.ts";
 import type { Game } from "./game.ts";
-import { replaceTraderOrders, UNITS_PER_CREDIT, JEV_MARKET_CALL_LIMIT } from "./market.ts";
+import { advanceMarket, replaceTraderOrders, JEV_MARKET_CALL_LIMIT } from "./market.ts";
 import type { TraderOrder } from "./market.ts";
 import { ProviderError } from "./providers.ts";
 
@@ -15,33 +15,40 @@ export type MarketAnswers = Record<string, string>;
 
 const STRATEGIES = {
   maker: "Supply two-sided liquidity, earn spreads, and keep balanced inventory.",
-  fundamental: "Seek positive expected value relative to estimated main-pot payouts.",
-  equity: "Prioritize showdown equity and diversify inventory across viable outcomes.",
+  fundamental: "Infer expected main-pot payouts from the spectator-visible cards, betting, and market data; seek positive value.",
+  equity: "Use displayed showdown equity, allowing for future folds, and diversify inventory across viable outcomes.",
   momentum: "Favor recent price trends, while avoiding excessive inventory risk.",
   contrarian: "Look for overreactions to recent price changes and trade against them.",
   noise: "Explore small speculative positions; keep sizes small and vary outcomes.",
 };
 
-/** Only dealt cards, visible actions, funded inventories, and recorded prices enter the model context. */
+/** Explicit allowlist of spectator-visible data; never use server forecasts to construct choices. */
 export function prepareMarketRound(game: Game): MarketRound {
-  const market = game.market;
-  const traders = market.traders.map(trader => {
+  const visible = viewGame(game, false, game.lastTickAt);
+  const market = visible.market;
+  const eligible = visible.players.filter(player => !player.folded);
+  const openingPrice = 1 / Math.max(1, eligible.length);
+  const traders = game.market.traders.map(trader => {
     const choices: Record<string, TraderOrder[]> = { hold: [] };
     const order = (outcome: number, side: "buy" | "sell", quantity: number, priceTicks: number): TraderOrder => ({ outcome, side, quantity, priceTicks: Math.max(1, Math.min(99, priceTicks)) });
-    const fair = market.values.map((value, i) => Math.max(.01, Math.min(.99, value * Math.exp(trader.bias[i]))));
+    const anchors = visible.players.map(player => {
+      const book = market.books.find(book => book.outcome === player.seat);
+      return book?.midpoint ?? book?.lastPrice ?? openingPrice;
+    });
     if (trader.kind === "maker") {
       for (const [name, spread] of [["tight_quotes", 2], ["wide_quotes", 5]] as const) {
-        choices[name] = market.values.flatMap((value, outcome) => value === 0 ? [] : [0, 1, 2].flatMap(level => [
-          order(outcome, "buy", 8 + level * 8, Math.floor(fair[outcome] * 100) - spread - level * 3),
-          order(outcome, "sell", 8 + level * 8, Math.ceil(fair[outcome] * 100) + spread + level * 3),
+        choices[name] = eligible.flatMap(player => [0, 1, 2].flatMap(level => [
+          order(player.seat, "buy", 8 + level * 8, Math.floor(anchors[player.seat] * 100 + 1e-8) - spread - level * 3),
+          order(player.seat, "sell", 8 + level * 8, Math.ceil(anchors[player.seat] * 100 - 1e-8) + spread + level * 3),
         ]));
       }
     } else {
-      market.values.forEach((value, outcome) => {
-        if (value === 0) return;
+      eligible.forEach(player => {
+        const outcome = player.seat;
+        const book = market.books.find(book => book.outcome === outcome);
         for (const side of ["buy", "sell"] as const) {
           for (const quantity of trader.kind === "noise" ? [3, 6] : [5, 15]) {
-            choices[`${side}_${outcome}_${quantity}`] = [order(outcome, side, quantity, Math.round(fair[outcome] * 100))];
+            choices[`${side}_${outcome}_${quantity}`] = [order(outcome, side, quantity, Math.round(((side === "buy" ? book?.bestAsk : book?.bestBid) ?? anchors[outcome]) * 100))];
           }
         }
       });
@@ -50,16 +57,16 @@ export function prepareMarketRound(game: Game): MarketRound {
   });
   return {
     state: JSON.stringify({
-      rules: "Play-money prediction market. A share pays $1 divided among main-pot winners; losing shares pay zero. Choose independently for each trader. No future cards are known. Quotes replace that trader's previous orders. Hold keeps existing orders. Orders are limited to available cash and owned shares at execution.",
-      hand: game.hand, street: game.poker.street, board: game.poker.board, pot: game.poker.pot,
-      players: game.poker.players.map(p => ({ seat: p.seat, name: p.name, cards: p.hole, folded: p.folded, stack: p.stack, action: p.lastAction })),
-      estimatedPayouts: market.values, tick: market.tick, history: market.history.slice(-6),
-      books: [0, 1, 2, 3].map(outcome => ({ outcome,
-        bids: market.orders.filter(o => o.outcome === outcome && o.side === "buy").sort((a,b) => b.priceTicks-a.priceTicks).slice(0,6).map(o => ({ cents: o.priceTicks, quantity: o.remaining })),
-        asks: market.orders.filter(o => o.outcome === outcome && o.side === "sell").sort((a,b) => a.priceTicks-b.priceTicks).slice(0,6).map(o => ({ cents: o.priceTicks, quantity: o.remaining })),
-      })),
-      traders: market.traders.map(t => ({ id: t.id, strategy: t.kind, bias: t.bias,
-        cash: market.accounts[t.id].cashUnits / UNITS_PER_CREDIT, holdings: market.accounts[t.id].shares })),
+      rules: "Play-money prediction market. A share pays $1 divided among main-pot winners; losing shares pay zero. Choose independently for each named trader. The spectator account belongs to the human, not the named trader. You see the same revealed cards, equity calculation, and trader holdings as the human spectator, not a private server forecast. Future cards are unknown. Quotes replace that trader's previous orders. Hold keeps existing orders. Orders are limited to available cash and owned shares at execution.",
+      hand: visible.hand, street: visible.street, board: visible.board, pot: visible.pot,
+      actor: visible.actor, button: visible.button,
+      players: visible.players.map(p => ({ seat: p.seat, name: p.name, cards: p.cards, folded: p.folded, allIn: p.allIn, stack: p.stack, action: p.lastAction, personality: p.className, description: p.description })),
+      showdownEquity: visible.odds, tick: market.tick, history: market.history,
+      books: market.books.map(book => ({ outcome: book.outcome, bids: book.bids.slice(0,6), asks: book.asks.slice(0,6), bestBid: book.bestBid, bestAsk: book.bestAsk, midpoint: book.midpoint, lastPrice: book.lastPrice })),
+      recentTrades: market.recentTrades.slice(0,6),
+      traders: market.traderPositions,
+      spectatorAccount: { availableCash: market.availableCash, accountValue: market.totalLiquidationValue, pnl: visible.pnl, positions: market.positions.map(p => ({ outcome: p.outcome, quantity: p.quantity, averageCost: p.averageCost, liquidationValue: p.liquidationValue, unrealizedPnl: p.unrealizedPnl })), openOrders: market.openOrders },
+      activity: visible.activity.slice(-10),
     }), traders,
   };
 }
@@ -93,6 +100,8 @@ export function reserveMarketRound(source: Game, token: string, now: number): Ga
   const agent = source.marketAgents ?? { calls: 0, nextAt: 0 };
   if (agent.nextAt > now || (agent.pending && agent.pending.expiresAt > now) || agent.calls >= MARKET_CALL_LIMIT) return null;
   const game = structuredClone(source);
+  // Upgrade earlier Jev snapshots too: eligibility comes only from publicly visible folds.
+  game.market = advanceMarket(game.market, game.poker.players.map(player => player.folded ? 0 : 1), 0);
   game.marketAgents = { calls: agent.calls + 1, nextAt: now + MARKET_ROUND_INTERVAL_MS,
     pending: { token, expiresAt: now + MARKET_ROUND_TIMEOUT_MS + 2000, hand: source.hand, pokerRevision: source.poker.revision } };
   return game;

@@ -42,3 +42,8 @@ New Live sessions use Jev through Gateway; Practice and legacy sessions keep loc
 ## Historical order book replay follow-up
 
 Verified in a real saved Practice replay at desktop size: replay opens paused; selecting Claude updates both the wider historical book and sidebar selection; Next moves from hand 1 at 0s to the recorded 4s snapshot; Previous restores the original prices/quantities; seeking the last step shows settled orders with guidance to step backward. New service coverage verifies a Jev-only quote update records a replay frame without any human trade. Older recordings remain limited to the snapshots already saved. No provider calls are made by replay.
+
+
+## Jev spectator-view boundary follow-up
+
+Jev now follows the spectator-visible information policy selected by the user: revealed hole cards, displayed showdown equity, visible market data, and visible trader holdings are included. Internal poker rollout forecasts, private trader cash/biases/cost basis, the seed, RNG, and undealt deck are excluded. Candidate prices use visible quotes or neutral opening prices, and eligibility comes from public folds. Regression tests perturb the excluded fields while holding displayed state fixed and require identical context and order menus; an adapter test checks the serialized Gateway payload. All 128 tests on the updated main baseline, TypeScript, targeted lint, and the production build passed. No paid model calls were made.

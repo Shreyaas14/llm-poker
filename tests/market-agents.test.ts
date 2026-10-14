@@ -33,10 +33,16 @@ test("bounded trader choices execute funded matches and cannot submit human or i
   assert.equal(exhausted.orders.filter(o=>o.owner==='trader-0').length,0);
 });
 
-test("round context includes dealt cards and prices but never the deck, future board, or RNG", () => {
+test("round context matches spectator cards, equity, depth, and trader holdings without private account data", () => {
   const game=fixture(),round=prepareMarketRound(game),state=JSON.parse(round.state);
   assert.equal(round.traders.length,16);assert.deepEqual(state.board,game.poker.board);
   assert.deepEqual(state.players[0].cards,game.poker.players[0].hole);
+  const visible=viewGame(game,false,NOW);
+  assert.deepEqual(state.showdownEquity,visible.odds);
+  assert.deepEqual(state.traders,visible.market.traderPositions);
+  assert.deepEqual(state.books[0].bids,visible.market.books[0].bids.slice(0,6));
+  assert.equal(state.estimatedPayouts,undefined);
+  assert.ok(state.traders.every((t:Record<string,unknown>)=>!("cash" in t)&&!("cashUnits" in t)&&!("bias" in t)&&!("beliefs" in t)));
   assert.equal(state.deck,undefined);assert.equal(state.rngState,undefined);
   assert.ok(!round.state.includes('rngState'));assert.ok(!round.state.includes('seed'));
   assert.equal(Object.keys(round.traders[0].choices).length,3);
@@ -169,4 +175,51 @@ test("invalid choices abort the whole batch before any order changes", () => {
   answers['trader-15']='unknown';
   assert.throws(()=>finishMarketRound(game,'token',round,answers,NOW+1000),/Invalid/);
   assert.equal(game.market.orders.length,0);assert.equal(game.marketAgents?.pending?.token,'token');
+});
+
+
+test("unseen forecasts, private trader data, deck order, and RNG cannot change Jev context or price candidates", () => {
+  const game=fixture();
+  const before=prepareMarketRound(game);
+  const altered=structuredClone(game);
+  altered.values=[.97,.01,.01,.01];altered.market.values=[0,0,0,1];
+  altered.poker.deck.reverse();altered.poker.seed='different-secret';altered.market.rngState=99;
+  for(const trader of altered.market.traders) {
+    trader.bias=[100,-100,100,-100];trader.beliefs=[0,0,0,1];
+    altered.market.accounts[trader.id].cashUnits+=12345;
+    altered.market.accounts[trader.id].costBasisUnits=[999,999,999,999];
+  }
+  assert.deepEqual(prepareMarketRound(altered),before);
+  const reserved=reserveMarketRound(altered,'public-eligibility',NOW)!;
+  assert.deepEqual(reserved.market.values,[.25,.25,.25,.25]);
+});
+
+test("opening prices are neutral and displayed market quotes determine later order limits", () => {
+  const game=fixture(),opening=prepareMarketRound(game);
+  assert.deepEqual(opening.traders[2].choices.buy_0_5,[{outcome:0,side:'buy',quantity:5,priceTicks:25}]);
+  game.market=replaceTraderOrders(game.market,'trader-0',[{outcome:0,side:'buy',quantity:5,priceTicks:41},{outcome:0,side:'sell',quantity:5,priceTicks:47}]);
+  const quoted=prepareMarketRound(game);
+  assert.equal(quoted.traders[2].choices.buy_0_5[0].priceTicks,47);
+  assert.equal(quoted.traders[2].choices.sell_0_5[0].priceTicks,41);
+  const maker=quoted.traders[0].choices.tight_quotes.filter(o=>o.outcome===0);
+  assert.equal(maker[0].priceTicks,42);assert.equal(maker[1].priceTicks,46);
+  game.poker.players[0].folded=true;
+  const folded=prepareMarketRound(game);
+  assert.ok(folded.traders.every(t=>Object.values(t.choices).flat().every(o=>o.outcome!==0)));
+});
+
+test("the actual Gateway payload contains spectator information and no internal forecast or trader bias", async () => {
+  const game=fixture(),round=prepareMarketRound(game),oldFetch=globalThis.fetch;
+  let payload:Record<string,unknown>|undefined;
+  globalThis.fetch=async(_url,init)=>{
+    payload=JSON.parse(String(init?.body));
+    return Response.json({answers:Object.fromEntries(round.traders.map(t=>[t.id,{type:'choice',choice:'hold'}]))});
+  };
+  try {
+    await requestMarketDecisions(round,'test-only');
+    const state=JSON.parse(String(payload!.state));
+    assert.deepEqual(state.players[0].cards,viewGame(game,false,NOW).players[0].cards);
+    assert.deepEqual(state.showdownEquity,viewGame(game,false,NOW).odds);
+    for(const key of ['estimatedPayouts','rngState','beliefs','cashUnits','costBasisUnits','seed','deck']) assert.ok(!JSON.stringify(payload).includes(`"${key}"`),key);
+  } finally {globalThis.fetch=oldFetch;}
 });
