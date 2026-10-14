@@ -28,13 +28,14 @@ export type PokerState = {
   // Kept for all five hands; absent in older saved games with fixed seat styles.
   classIds?: ClassId[];
 };
+// Persisted IDs stay stable so existing games retain their assignments.
 export type ClassId = 'disciplined' | 'pressure' | 'patient' | 'unpredictable';
 export type Style = { id: ClassId; name: string; description: string };
 export const STYLES: readonly Style[] = [
-  { id: 'disciplined', name: 'Analyst', description: 'Selective hands, measured bets.' },
-  { id: 'pressure', name: 'Challenger', description: 'Wide ranges, pressure, frequent bluffs.' },
-  { id: 'patient', name: 'Sentinel', description: 'Patient play, strong-hand commitment.' },
-  { id: 'unpredictable', name: 'Wildcard', description: 'Bold bluffs, varied bets, surprise slow plays.' },
+  { id: 'disciplined', name: 'Shark', description: 'Selective starting hands, aggressive value bets. Bluff sparingly and fold weak hands against pressure.' },
+  { id: 'pressure', name: 'Bully', description: 'Wide ranges, frequent raises and bluffs. Apply pressure with sizable bets, but back down when the risk is too high.' },
+  { id: 'patient', name: 'Opportunist', description: 'Steal unraised pots in position or heads-up with small bets and selective bluffs. Tighten up and fold weak hands when opponents fight back.' },
+  { id: 'unpredictable', name: 'Maniac', description: 'Very wide ranges, relentless raises, frequent bluffs and large bets. Take more risks than Bully, while still respecting legal actions.' },
 ];
 export const STYLE = STYLES;
 export const PROVIDERS = ['GPT', 'Claude', 'Gemini', 'Grok'] as const;
@@ -349,12 +350,12 @@ export function getSpectator(state: PokerState): SpectatorState {
 }
 
 // Numeric style parameters are server-private, not part of spectator/agent DTOs.
-const POLICIES = [
-  { loose: 0.00, aggression: 0.52, bluff: 0.07, sizing: 0.60 },
-  { loose: 0.11, aggression: 0.72, bluff: 0.19, sizing: 0.85 },
-  { loose: -0.07, aggression: 0.40, bluff: 0.03, sizing: 0.65 },
-  { loose: 0.16, aggression: 0.62, bluff: 0.25, sizing: 1.00 },
-];
+const POLICIES: Record<ClassId, { loose: number; aggression: number; bluff: number; sizing: number }> = {
+  disciplined: { loose: -0.02, aggression: 0.75, bluff: 0.05, sizing: 0.65 }, // Shark
+  pressure: { loose: 0.11, aggression: 0.80, bluff: 0.22, sizing: 0.85 }, // Bully
+  patient: { loose: -0.04, aggression: 0.50, bluff: 0.03, sizing: 0.50 }, // Opportunist
+  unpredictable: { loose: 0.22, aggression: 0.92, bluff: 0.45, sizing: 1.20 }, // Maniac
+};
 function strength(observation: Observation): number {
   const [first, second] = observation.hole;
   const a = RANKS.indexOf(first[0]) + 2, b = RANKS.indexOf(second[0]) + 2;
@@ -386,15 +387,20 @@ function strength(observation: Observation): number {
  * only an Observation, so it cannot peek at opponents' cards or the runout. */
 export function decidePractice(observation: Observation, seed: number): Action {
   const random = randomStream(seed), roll = () => random() / 4294967296;
-  const legal = observation.legal, policy = POLICIES[STYLES.findIndex(style => style.id === observation.style.id)];
+  const legal = observation.legal, policy = POLICIES[observation.style.id];
   if (!policy) throw new Error('Unknown playing class');
   const own = observation.players[observation.seat];
   const live = observation.players.filter(player => !player.folded).length;
   const value = strength(observation) + policy.loose - Math.max(0, live - 2) * 0.035;
   const price = legal.callAmount / Math.max(1, observation.pot + legal.callAmount);
   const commitment = legal.callAmount / Math.max(1, own.stack);
-  const bluff = roll() < policy.bluff / Math.max(1, live - 1);
-  const shouldRaise = (value > 0.67 && roll() < policy.aggression) || (bluff && commitment < 0.18);
+  // The button acts last after the flop; heads-up also gives fewer opponents
+  // to get through. Cheap, unraised pots offer steals; resistance removes them.
+  const steal = observation.style.id === 'patient'
+    && (observation.seat === observation.button || live === 2)
+    && observation.currentBet <= (observation.street === 'preflop' ? observation.bigBlind : 0);
+  const bluff = roll() < (steal ? 0.32 : policy.bluff) / Math.max(1, live - 1);
+  const shouldRaise = (value > (steal ? 0.52 : 0.67) && roll() < policy.aggression) || (bluff && commitment < 0.18);
   if (legal.canRaise && shouldRaise) {
     const desired = observation.currentBet + Math.max(observation.bigBlind, Math.round((observation.pot + legal.callAmount) * policy.sizing * (0.7 + roll() * 0.6)));
     return { type: 'raise', amount: Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo!, desired)) };
