@@ -122,20 +122,14 @@ export async function startSession(who: Identity, body: unknown) {
     if (!profile) throw new GameError("Sign in and choose a username before a ranked run.",401,"profile_required");
     if (!profile.remainingAttempts) throw new GameError("Your three ranked starts are used for this week. You can still play unranked.",409,"attempts_exhausted");
   }
-  // Limit billed runs per signed-in account in addition to the Gateway's global cap.
-  if (mode==="live") {
-    const count = await db().prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id=? AND mode='live' AND created_at>?").bind(who.id,Date.now()-86400000).first<{n:number}>();
-    if ((count?.n??0)>=6) throw new GameError("Today's six live runs are used. Practice is still available.",429,"daily_limit");
-  }
   const now=Date.now(), week=weekWindow(now).week;
   const game=createGame(requestId,mode,ranked,now,modelIds(),personalitiesEnabled,mode === "live" ? "jev" : "local");
   const state = JSON.stringify(game);
   const [result] = await db().batch([db().prepare(`INSERT INTO sessions(id,user_id,week,mode,ranked,status,version,state,created_at,updated_at,lock_until)
     SELECT ?,?,?,?,?, 'playing',0,?,?,?,0
     WHERE NOT EXISTS(SELECT 1 FROM sessions WHERE user_id=? AND status IN ('playing','hand_complete'))
-    AND (?=0 OR (SELECT COUNT(*) FROM sessions WHERE user_id=? AND week=? AND ranked=1)<3)
-    AND (?!='live' OR (SELECT COUNT(*) FROM sessions WHERE user_id=? AND mode='live' AND created_at>?)<6)`)
-    .bind(requestId,who.id,week,mode,ranked?1:0,state,now,now,who.id,ranked?1:0,who.id,week,mode,who.id,now-86400000),
+    AND (?=0 OR (SELECT COUNT(*) FROM sessions WHERE user_id=? AND week=? AND ranked=1)<3)`)
+    .bind(requestId,who.id,week,mode,ranked?1:0,state,now,now,who.id,ranked?1:0,who.id,week),
     db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,0,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=0 AND state=?)")
       .bind(requestId, JSON.stringify(createReplayFrame(game, "deal", now)), requestId, who.id, state),
   ]);
