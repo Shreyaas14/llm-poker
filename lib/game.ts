@@ -67,6 +67,28 @@ function tradeReceipt(input: HumanOrderInput, result: OrderResult, name: string)
     : ` ${result.remainingQuantity} unfilled shares canceled.`;
   return `${execution} ${payment}${remainder}`;
 }
+/** Record resting-order changes from market arrivals, repricing, or settlement. */
+export function applyMarketUpdate(game: Game, next: MarketState, now: number) {
+  for (const order of game.market.orders.filter(order => order.owner === "human")) {
+    const remaining = next.orders.find(candidate => candidate.id === order.id)?.remaining ?? 0;
+    if (remaining === order.remaining) continue;
+    const name = game.poker.players[order.outcome].name;
+    if (next.status === "settled" || next.values[order.outcome] === 0) {
+      const reason = next.status === "settled" ? "the hand settled" : `${name} folded`;
+      log(game, `Canceled ${order.remaining} unfilled ${name} ${order.side} shares because ${reason}. No shares remain open on this order.`, "trade", now);
+      continue;
+    }
+    // Human resting orders never expire and always execute at their own limit.
+    // The remaining-size delta survives truncation of the recent trade tape.
+    const filled = order.remaining - remaining;
+    const total = filled * order.priceTicks / 100;
+    const disposition = remaining > 0
+      ? `${order.quantity - remaining} of ${order.quantity} filled; ${remaining} shares remain open at ${order.priceTicks}¢.`
+      : `All ${order.quantity} shares filled. No shares remain open on this order.`;
+    log(game, `${order.side === "buy" ? "Bought" : "Sold"} ${filled} ${name} shares at ${order.priceTicks.toFixed(1)}¢ from a resting order. ${order.side === "buy" ? "Paid" : "Received"} $${total.toFixed(2)}. ${disposition}`, "trade", now);
+  }
+  game.market = next;
+}
 export function createGame(id: string, mode: GameMode, ranked: boolean, now = Date.now(), models: string[] = [...DEFAULT_MODELS], personalitiesEnabled = false, marketDriver: MarketDriver = "local"): Game {
   const poker = createHand(randomSeed(), randomNumber() % 4, 1000, personalitiesEnabled ? shuffledClasses(randomSeed()) : undefined, personalitiesEnabled);
   const values = estimateValues(poker, randomNumber(), 512);
@@ -87,11 +109,11 @@ export function catchUp(game: Game, now: number) {
   const until = Math.min(now, game.eventUntil);
   const ticks = Math.max(0, Math.min(45, Math.floor((until - game.lastTickAt) / 1000)));
   if (ticks) {
-    game.market = advanceMarket(game.market, undefined, ticks);
+    applyMarketUpdate(game, advanceMarket(game.market, undefined, ticks), now);
     game.lastTickAt += ticks * 1000;
   }
   if (game.marketReactionPending) {
-    game.market = reactMarket(game.market);
+    applyMarketUpdate(game, reactMarket(game.market), now);
     delete game.marketReactionPending;
   }
 }
@@ -153,9 +175,12 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   if (command.type === "cancel") {
     const hand = command.hand ?? Math.max(1, Math.floor(command.pokerRevision / 10000));
     if (hand !== game.hand) throw new GameError("This hand has ended. Review your current orders.",409,"stale_hand");
+    const order = game.market.orders.find(order => order.id === command.orderId);
     try { game.market = cancelHumanOrder(game.market, command.orderId); }
     catch { throw new GameError("You can only cancel your own orders."); }
-    log(game, "Unfilled order canceled. Reserved funds released.", "trade", now);
+    // Catch-up can fill the order before its cancellation arrives. Preserve the
+    // fill receipt in that case instead of claiming those shares were canceled.
+    if (order) log(game, `Canceled ${order.remaining} unfilled ${game.poker.players[order.outcome].name} ${order.side} shares. Reserved ${order.side === "buy" ? "cash" : "shares"} released.`, "trade", now);
     return game;
   }
   if (command.pokerRevision !== game.poker.revision) throw new GameError("The table has advanced. Refresh the current action.", 409, "stale_state");
@@ -189,7 +214,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   log(game, `${name} ${action.type === "raise" ? `raises to ${action.amount}` : action.type === "call" ? "calls" : action.type === "fold" ? "folds" : "checks"}.`, "poker", now);
   if (game.poker.street !== oldStreet && game.poker.street !== "complete") log(game, `${game.poker.street[0].toUpperCase()}${game.poker.street.slice(1)} revealed.`, "poker", now);
   if (!isPlaying(game)) {
-    game.market = settleMarket(game.market, game.poker.mainPotShares);
+    applyMarketUpdate(game, settleMarket(game.market, game.poker.mainPotShares), now);
     const cashAfter = getMarketView(game.market).cash;
     const names = game.poker.mainPotWinners.map(i => game.poker.players[i].name).join(" and ");
     const description = `${names} ${game.poker.mainPotWinners.length > 1 ? "split" : "wins"} the main pot.`;
@@ -199,7 +224,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   } else {
     game.values = estimateValues(game.poker, randomNumber(), 512);
     // Publish the changed poker state before any informed synthetic arrivals.
-    game.market = advanceMarket(game.market, game.values, 0);
+    applyMarketUpdate(game, advanceMarket(game.market, game.values, 0), now);
     // Jev markets receive only their provider-selected orders; a news event
     // must never silently substitute the local decision models.
     game.marketReactionPending = game.market.driver !== "jev";

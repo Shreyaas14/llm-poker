@@ -1,4 +1,4 @@
-import { catchUp } from "./game.ts";
+import { applyMarketUpdate, catchUp } from "./game.ts";
 import type { Game } from "./game.ts";
 import { replaceTraderOrders, UNITS_PER_CREDIT, JEV_MARKET_CALL_LIMIT } from "./market.ts";
 import type { TraderOrder } from "./market.ts";
@@ -123,7 +123,7 @@ export function finishMarketRound(source: Game, token: string, round: MarketRoun
   const first = game.market.tick % round.traders.length;
   const arrivals = [...round.traders.slice(first), ...round.traders.slice(0, first)];
   for (const trader of arrivals) {
-    if (answers[trader.id] !== "hold") game.market = replaceTraderOrders(game.market, trader.id, trader.choices[answers[trader.id]]);
+    if (answers[trader.id] !== "hold") applyMarketUpdate(game, replaceTraderOrders(game.market, trader.id, trader.choices[answers[trader.id]]), now);
   }
   game.market.agentNotice = game.marketAgents!.calls >= MARKET_CALL_LIMIT ? "Jev call limit reached. Existing orders may still fill." : null;
   return game;
