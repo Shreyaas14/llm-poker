@@ -27,6 +27,7 @@ export default function Home() {
   const [tradingBusy, setTradingBusy] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tradeError, setTradeError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [tab, setTab] = useState<"table" | "leaderboard" | "games">("table");
   const [initialReplayId, setInitialReplayId] = useState<string | null>(null);
@@ -96,7 +97,8 @@ export default function Home() {
     if (background) tickPending.current = true;
     if (poker) { commandCount.current++; setBusy(true); }
     if (trading) { marketCount.current++; setTradingBusy(true); }
-    if (!background) setError(null);
+    if (trading) setTradeError(null);
+    else if (!background) setError(null);
     if (command.type === "advance") setAdvancing(true);
     const queue = poker ? commandQueue : marketQueue;
     const action = queue.current.catch(() => {}).then(async () => {
@@ -112,7 +114,7 @@ export default function Home() {
         if (next.status === "complete" && current.status !== "complete") void loadBootstrap().catch(() => {});
       } catch (e) {
         if (!background && mounted.current) {
-          setError(e instanceof Error ? e.message : "That action did not complete.");
+          (trading ? setTradeError : setError)(e instanceof Error ? e.message : "That action did not complete.");
           if (command.type === "advance" || command.type === "next_hand") {
             playbackIntent.current = false;
             setAutoPlay(false);
@@ -188,7 +190,7 @@ export default function Home() {
   }, [changePlayback]);
 
   async function startGame(mode: GameMode, ranked: boolean, personalitiesEnabled: boolean) {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setTradeError(null);
     try {
       await Promise.all([commandQueue.current, marketQueue.current]);
       const next = await request<SessionView>("/api/session", { method: "POST", body: JSON.stringify({ mode, ranked, personalitiesEnabled, requestId: crypto.randomUUID() }) });
@@ -214,14 +216,14 @@ export default function Home() {
     try {
       await Promise.all([commandQueue.current, marketQueue.current]);
       await request<{ ok: true }>(`/api/session/${session.id}`, { method: "DELETE", body: "{}" });
-      sessionRef.current = null; setSession(null); setConfirmEnd(false);
+      sessionRef.current = null; setSession(null); setConfirmEnd(false); setTradeError(null);
       setAnnouncement("Run ended. You can start a new challenge.");
       await loadBootstrap();
     } catch (e) { setError(e instanceof Error ? e.message : "Could not end this run."); }
     finally { setBusy(false); }
   }
 
-  function newChallenge() { playbackIntent.current = false; setAutoPlay(false); sessionRef.current = null; setSession(null); setAnnouncement(""); setTab("table"); }
+  function newChallenge() { playbackIntent.current = false; setAutoPlay(false); sessionRef.current = null; setSession(null); setTradeError(null); setAnnouncement(""); setTab("table"); }
   function showRules() { void changePlayback(true); setRulesOpen(true); window.setTimeout(() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 0); }
 
   const seats: TableSeat[] = session ? session.players.map(p => ({ id: String(p.seat), name: p.name, cards: p.cards, stack: p.stack, action: p.allIn ? "All-in" : p.lastAction || "Waiting", folded: p.folded, active: session.actor === p.seat && session.status === "playing", dealer: p.seat === session.button, winner: session.winners.includes(p.seat), allIn: p.allIn, classId: p.classId, className: p.className, description: p.description })) : bootstrap?.models?.length ? bootstrap.models.map(m => ({ ...MODEL_SEATS[m.seat], id: String(m.seat), name: m.name })) : MODEL_SEATS;
@@ -240,6 +242,7 @@ export default function Home() {
     <main id="main">
       <h1 className="sr-only">Poker prediction market</h1>
       {error ? <div className="error-banner" role="alert"><Info size={15} /><span>{error}{!bootstrap && !loading ? <button type="button" className="text-button" onClick={() => { setLoading(true); setError(null); void initialize(); }}>Retry connection <RotateCcw size={11} /></button> : null}</span><button type="button" aria-label="Dismiss error" onClick={() => setError(null)}><X size={14} /></button></div> : null}
+      {tradeError ? <div className="error-banner" role="alert"><Info size={15} /><span>{tradeError}</span><button type="button" aria-label="Dismiss trade error" onClick={() => setTradeError(null)}><X size={14} /></button></div> : null}
       {tab === "table" && session?.notice ? <div className="notice-banner"><Info size={14} /><span>{session.notice}</span></div> : null}
       {profileOpen ? <section className="settings-panel" aria-label="Your profile"><h2>Your profile</h2><p>Your public username appears on the weekly leaderboard. Three ranked starts per week are shared across both modes. {bootstrap?.profile ? `${bootstrap.profile.remainingAttempts} ranked attempts remaining this week.` : "Set one to enter ranked challenges."}</p><form onSubmit={saveProfile} className="profile-form"><div><label htmlFor="username">Public username</label><input className="text-input" id="username" autoComplete="nickname" minLength={3} maxLength={20} required value={username} onChange={e => setUsername(e.target.value)} placeholder="Your table name" /></div><button type="submit" className="primary-button" disabled={busy}>{busy ? <LoaderCircle size={12} className="loading-spinner" /> : <Check size={12} />}Save username</button></form></section> : null}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
