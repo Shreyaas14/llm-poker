@@ -8,7 +8,7 @@ Start with **$1,000 in play money**, watch GPT, Claude, Gemini, and Grok play fi
 
 [How to Play](#how-to-play) · [Trading](#make-a-trade) · [Personalities](#choose-your-opponents-styles) · [Replay](#rewind-the-game) · [Run Locally](#run-locally)
 
-<!-- DEMO_PLAY -->
+![Watch a real Practice hand with community cards and changing quotes](https://github.com/user-attachments/assets/19bdfbd6-b2fa-4a16-a016-36cc6aadd364)
 
 *Real Practice gameplay at Fast speed: revealed cards, betting, changing quotes, and your positions. All demos use synthetic decisions and play money.*
 
@@ -31,7 +31,7 @@ All balances are play money. There are no deposits, withdrawals, or prizes.
 
 ## Make a Trade
 
-<!-- DEMO_TRADE -->
+![Place a 25-share order and see 15 shares fill while the remainder cancels](https://github.com/user-attachments/assets/fa6ab9b5-8382-4418-92ff-17487eba320e)
 
 *In this Practice example, 15 of 25 Claude shares fill at 82¢: $12.30 is paid and the 10-share remainder cancels. Holdings, available depth, and the order receipt update together.*
 
@@ -86,7 +86,7 @@ Hover or focus a class badge for its description. Styles influence Live prompts,
 
 ## Rewind the Game
 
-<!-- DEMO_REPLAY -->
+![Step through recorded order-book depth and switch the selected player](https://github.com/user-attachments/assets/ba4535d9-db5a-4a28-8adc-acd1174d352d)
 
 *Step through saved market depth and switch players to inspect their historical books. Replay reads recorded snapshots; it does not simulate new trades.*
 
