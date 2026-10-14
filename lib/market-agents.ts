@@ -106,7 +106,7 @@ export function finishMarketRound(source: Game, token: string, round: MarketRoun
   delete game.marketAgents!.pending;
   catchUp(game, now);
   if (game.marketAgents!.calls >= MARKET_CALL_LIMIT) game.market.agentNotice = "Jev call limit reached. Existing orders may still fill.";
-  if (pending.expiresAt <= now || game.hand !== pending.hand || game.poker.revision !== pending.pokerRevision || game.pausedAt !== undefined || game.poker.street === "complete" || now >= game.eventUntil) return game;
+  if (pending.expiresAt <= now || game.hand !== pending.hand || game.pausedAt !== undefined || game.poker.street === "complete" || now >= game.eventUntil) return game;
   if (!answers) {
     game.market.agentNotice = "Jev traders unavailable. Retrying; existing orders may still fill.";
     return game;
@@ -116,6 +116,10 @@ export function finishMarketRound(source: Game, token: string, round: MarketRoun
     if (!Object.hasOwn(trader.choices, answers[trader.id])) throw new Error("Invalid market action.");
   }
   // Rotate the first arrival so no trader always receives batch priority.
+  // A poker action can arrive while Jev is thinking. These bounded, unexpired
+  // limit orders may still execute in the same hand, just like delayed human
+  // orders. The matcher rechecks current cash, inventory and folded outcomes;
+  // discarding every older revision would starve a realtime market entirely.
   const first = game.market.tick % round.traders.length;
   const arrivals = [...round.traders.slice(first), ...round.traders.slice(0, first)];
   for (const trader of arrivals) {
