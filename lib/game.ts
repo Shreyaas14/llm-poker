@@ -18,6 +18,7 @@ export type Game = {
   requestIds: string[]; createdAt: number; notice: string | null; providerCalls: number;
   // Optional for saved sessions created before card equity was introduced.
   odds?: ShowdownOdds; oddsKey?: string;
+  replayVersion?: 1;
 };
 // Old persisted sessions hydrate lazily; this bounded cache also covers repeated
 // reads before their first command persists the new fields. Normal sessions
@@ -68,7 +69,7 @@ export function createGame(id: string, mode: GameMode, ranked: boolean, now = Da
     poker, market: createMarket(values, randomNumber(), 1000), models,
     results: [], activity: [], sequence: 0, version: 0, cashBefore: 1000,
     eventUntil: now + TRADING_WINDOW_MS, lastTickAt: now, values,
-    requestIds: [], createdAt: now, notice: null, providerCalls: 0,
+    requestIds: [], createdAt: now, notice: null, providerCalls: 0, replayVersion: 1,
   };
   ensureOdds(game);
   log(game, mode === "live" ? "Four independent model seats are ready. You trade the outcome." : "Practice decision models are ready. You trade the outcome.", "system", now);
@@ -187,6 +188,7 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
   return {
     id: game.id, version: game.version, pokerRevision: game.poker.revision, mode: game.mode,
     status: ended ? game.hand === 5 ? "complete" : "hand_complete" : "playing",
+    replayAvailable: game.replayVersion === 1 && ended && game.hand === 5,
     busy, paused, hand: game.hand, totalHands: 5, startingBalance: 1000,
     personalitiesEnabled: game.poker.personalitiesEnabled !== false, ranked: game.ranked, rankEligible: game.rankEligible, notice: game.notice,
     street: game.poker.street, board: [...game.poker.board], actor: game.poker.actor,

@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { Check } from "lucide-react";
 import { ModelMark } from "./PokerTable";
 import type { Bootstrap, GameMode, SessionCommand, SessionView } from "../../app/types";
 import { equityDescription, OrderBook, percent } from "./MarketAnalytics";
@@ -8,10 +9,11 @@ export function credits(value: number) { return value.toLocaleString("en-US", { 
 export function signed(value: number) { return `${value < 0 ? "−" : "+"}${credits(Math.abs(value))}`; }
 export function price(value: number | null | undefined) { return value == null ? "—" : `${Math.round(value * 100)}¢`; }
 
-export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onStart }: {
-  session: SessionView | null; bootstrap: Bootstrap | null; busy: boolean; playing: boolean;
-  onCommand: (command: SessionCommand) => Promise<void>;
-  onStart: (mode: GameMode, ranked: boolean, personalitiesEnabled: boolean) => Promise<boolean>;
+export function MarketPanel({ session, bootstrap, busy, playing = false, onCommand, onStart, readOnly = false }: {
+  session: SessionView | null; bootstrap: Bootstrap | null; busy: boolean; playing?: boolean;
+  onCommand?: (command: SessionCommand) => Promise<void>;
+  onStart?: (mode: GameMode, ranked: boolean, personalitiesEnabled: boolean) => Promise<boolean>;
+  readOnly?: boolean;
 }) {
   const [selected, setSelected] = useState(0);
   const [side, setSide] = useState<"buy" | "sell">("buy");
@@ -41,7 +43,7 @@ export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onSt
 
   async function submitOrder() {
     setTicketError(null);
-    if (unavailable || busy) return;
+    if (readOnly || !onCommand || unavailable || busy) return;
     if (!session || actualPrice == null || !Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
       setTicketError("Enter a positive whole number of shares."); return;
     }
@@ -53,7 +55,7 @@ export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onSt
   }
 
   return <aside className="market-aside" id="prediction-market" aria-label="Prediction market">
-    <div className="section-title"><h2>{session ? "Who wins?" : "New challenge"}</h2>{session ? <span>{ended ? "Settled" : paused ? "Paused" : session.tradingOpen ? `${session.marketSecondsRemaining}s open` : "Closed"}</span> : null}</div>
+    <div className="section-title"><h2>{session ? "Who wins?" : "New challenge"}</h2>{session ? <span>{readOnly ? "Replay" : ended ? "Settled" : paused ? "Paused" : session.tradingOpen ? `${session.marketSecondsRemaining}s open` : "Closed"}</span> : null}</div>
     <section className={`market-panel ${!session ? "market-panel-intro" : ""}`}>
       {session ? <><div className="market-columns"><span>Model</span><span>{ended ? "Payout" : "Buy"}</span><span>{ended ? "Result" : "Sell"}</span></div>
       <div className="market-outcomes" aria-label="Outcome prices">{names.map(model => {
@@ -72,10 +74,10 @@ export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onSt
         <label className="ranked-choice"><input type="checkbox" checked={personalitiesEnabled} disabled={busy} onChange={e => setPersonalitiesEnabled(e.target.checked)} /> Enable personalities</label>
         <p className="ticket-note">{personalitiesEnabled ? "Shark, Bully, Maniac, and Opportunist are assigned for all five hands." : "No assigned playing styles. Models play without personality instructions."}</p>
         {bootstrap?.authenticated && bootstrap.profile ? <label className="ranked-choice"><input type="checkbox" checked={ranked} onChange={e => setRanked(e.target.checked)} /> Enter weekly leaderboard <span>{bootstrap.profile.remainingAttempts} attempts left</span></label> : null}
-        {mode === "live" && bootstrap?.liveAvailable && !bootstrap.authenticated ? <a className="primary-button wide" href="/signin-with-chatgpt?return_to=/" target="_top">Sign in for live models</a> : <button type="button" className="primary-button wide" disabled={busy || !bootstrap || mode === "live" && !bootstrap.liveAvailable || ranked && !bootstrap.profile?.remainingAttempts} onClick={async () => { if (await onStart(mode, ranked, personalitiesEnabled)) setPersonalitiesEnabled(false); }}>{busy ? "Starting…" : mode === "live" ? "Start live challenge" : "Start practice challenge"}</button>}
+        {mode === "live" && bootstrap?.liveAvailable && !bootstrap.authenticated ? <a className="primary-button wide" href="/signin-with-chatgpt?return_to=/" target="_top">Sign in for live models</a> : <button type="button" className="primary-button wide" disabled={busy || !bootstrap || mode === "live" && !bootstrap.liveAvailable || ranked && !bootstrap.profile?.remainingAttempts} onClick={async () => { if (await onStart?.(mode, ranked, personalitiesEnabled)) setPersonalitiesEnabled(false); }}>{busy ? "Starting…" : mode === "live" ? "Start live challenge" : "Start practice challenge"}</button>}
         {!bootstrap?.authenticated ? <p className="login-hint"><a href="/signin-with-chatgpt?return_to=/" target="_top">Sign in</a> to enter the leaderboard.</p> : !bootstrap.profile ? <p className="login-hint">Choose a username in your profile to enter ranked challenges.</p> : <p className="login-hint">{ranked ? "Ranked attempts count when a challenge starts." : "Unranked. No weekly attempt used."}</p>}
 
-      </div> : ended ? <div className="trade-ticket settlement-ticket"><span className="eyebrow">Hand {session.hand} settled</span><h3>{session.results.at(-1)?.description ?? "This hand is complete."}</h3><div className="trade-details"><div><span>This hand’s PnL</span><strong className={(session.results.at(-1)?.pnl ?? 0) < 0 ? "negative" : "positive"}>{signed(session.results.at(-1)?.pnl ?? 0)} credits</strong></div><div><span>Your balance</span><strong>{credits(session.market.cash)} credits</strong></div></div>{session.status === "hand_complete" ? <p className="ticket-note">{paused ? "Press Play to deal the next hand." : "The next hand deals automatically."}</p> : <p className="ticket-note">Five hands complete.</p>}</div> : <div className="trade-ticket">
+      </div> : readOnly ? <div className="trade-ticket settlement-ticket"><span className="eyebrow">RECORDED MARKET</span><h3>{ended ? session.results.at(-1)?.description ?? "This hand has settled." : "Market prices at this step"}</h3><div className="trade-details"><div><span>Your recorded balance</span><strong>{credits(session.market.cash)} credits</strong></div>{ended ? <div><span>This hand’s PnL</span><strong>{signed(session.results.at(-1)?.pnl ?? 0)} credits</strong></div> : null}</div><p>Replay is read-only. Use the playback controls to explore this game.</p>{lastTrade ? <p className="trade-feedback"><Check size={11} /><span>{lastTrade.text}</span></p> : null}</div> : ended ? <div className="trade-ticket settlement-ticket"><span className="eyebrow">Hand {session.hand} settled</span><h3>{session.results.at(-1)?.description ?? "This hand is complete."}</h3><div className="trade-details"><div><span>This hand’s PnL</span><strong className={(session.results.at(-1)?.pnl ?? 0) < 0 ? "negative" : "positive"}>{signed(session.results.at(-1)?.pnl ?? 0)} credits</strong></div><div><span>Your balance</span><strong>{credits(session.market.cash)} credits</strong></div></div>{session.status === "hand_complete" ? <p className="ticket-note">{paused ? "Press Play to deal the next hand." : "The next hand deals automatically."}</p> : <p className="ticket-note">Five hands complete.</p>}</div> : <div className="trade-ticket">
         <div className="ticket-top"><h3>{selectedPlayer?.name} shares</h3><div className="trade-tabs" aria-label="Trade side"><button className={`trade-tab ${side === "buy" ? "active" : ""}`} type="button" aria-pressed={side === "buy"} onClick={() => { setSide("buy"); setTicketError(null); }}>Buy</button><button className={`trade-tab ${side === "sell" ? "active" : ""}`} type="button" aria-pressed={side === "sell"} onClick={() => { setSide("sell"); setTicketError(null); }}>Sell</button></div></div>
         <label className="field-label" htmlFor="order-type">Order type <span>{orderType === "ioc" ? "Unfilled shares cancel" : "Can carry across actions"}</span></label><select className="select-input" id="order-type" value={orderType} onChange={e => setOrderType(e.target.value as "ioc" | "limit")}><option value="ioc">Buy / sell at displayed quote</option><option value="limit">Limit order</option></select>
         <label className="field-label" htmlFor="trade-quantity">Quantity <span>{side === "buy" ? `${credits(session.market.availableCash)} credits available` : `${position?.availableQuantity ?? 0} shares available`}</span></label><div className="input-with-unit"><input className="text-input" id="trade-quantity" type="number" inputMode="numeric" min="1" max="100000" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} /><span>shares</span></div><div className="quick-amounts" aria-label="Share quantity presets">{[10, 25, 50, 100].map(q => <button type="button" key={q} onClick={() => setQuantity(String(q))}>{q}</button>)}</div>

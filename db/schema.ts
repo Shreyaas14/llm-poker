@@ -23,3 +23,9 @@ export const sessions = sqliteTable("sessions", {
   finalPnl: integer("final_pnl"),
   providerCalls: integer("provider_calls").notNull().default(0),
 }, t => [index("sessions_user_week").on(t.userId, t.week), index("sessions_leaderboard").on(t.week, t.mode, t.status)]);
+
+export const replayFrames = sqliteTable("replay_frames", {
+  sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  frame: text("frame").notNull(),
+}, t => [uniqueIndex("replay_frames_session_version").on(t.sessionId, t.version)]);

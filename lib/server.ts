@@ -3,13 +3,14 @@ import { cookies } from "next/headers";
 import { getChatGPTUser } from "../app/chatgpt-auth";
 import { GameError, commandGame, createGame, viewGame } from "./game";
 import type { Game } from "./game";
+import { createReplayFrame, shouldRecordReplay } from "./replay";
 import { DEFAULT_MODELS, ProviderError, requestDecision } from "./providers";
 import { PROVIDERS } from "./poker";
-import type { Bootstrap, CommandRequest, GameMode, LeaderboardEntry, Profile, SessionView } from "../app/types";
+import type { Bootstrap, CommandRequest, GameMode, LeaderboardEntry, Profile, SessionView, GameHistory, GameReplay, ReplayFrame } from "../app/types";
 import { z } from "zod";
 
 type Identity = { id: string; authenticated: boolean };
-type SessionRow = { id: string; user_id: string; state: string; status: string; version: number; lock_until: number; week: string; ranked: number };
+type SessionRow = { id: string; user_id: string; state: string; status: string; version: number; lock_until: number; week: string; ranked: number; mode: GameMode; updated_at: number };
 const uuid = z.string().uuid();
 const commandSchema = z.intersection(z.object({requestId: uuid}), z.discriminatedUnion("type", [
   z.object({type: z.literal("advance"), pokerRevision: z.number().int().nonnegative()}),
@@ -84,6 +85,30 @@ export async function getSession(who: Identity, id?: string) {
   const row = await activeRow(who.id);
   return row ? rowView(row) : null;
 }
+export async function completedGames(who: Identity, page: number): Promise<GameHistory> {
+  const rows = await db().prepare("SELECT * FROM sessions WHERE user_id=? AND status='complete' ORDER BY updated_at DESC,id DESC LIMIT 26 OFFSET ?")
+    .bind(who.id, page * 25).all<SessionRow>();
+  return {
+    games: rows.results.slice(0, 25).map(row => {
+      const game = JSON.parse(row.state) as Game;
+      return { id: row.id, mode: row.mode, ranked: Boolean(row.ranked), pnl: viewGame(game).pnl,
+        completedAt: new Date(row.updated_at).toISOString(), replayAvailable: game.replayVersion === 1 };
+    }),
+    nextPage: rows.results.length > 25 ? page + 1 : null,
+  };
+}
+export async function getReplay(who: Identity, id: string): Promise<GameReplay> {
+  const row = await ownedRow(id, who);
+  if (row.status !== "complete") throw new GameError("Replay is available after all five hands finish.", 409, "not_complete");
+  if ((JSON.parse(row.state) as Game).replayVersion !== 1)
+    throw new GameError("This game started before replay recording was available.", 409, "replay_unavailable");
+  const rows = await db().prepare("SELECT frame FROM replay_frames WHERE session_id=? ORDER BY version")
+    .bind(id).all<{frame: string}>();
+  const frames = rows.results.map(row => JSON.parse(row.frame) as ReplayFrame);
+  if (!frames.length || frames[0].version !== 0 || frames.at(-1)?.session.status !== "complete")
+    throw new GameError("This game does not have a complete replay recording.", 409, "replay_unavailable");
+  return { id, frames };
+}
 export async function startSession(who: Identity, body: unknown) {
   const {mode,ranked,personalitiesEnabled,requestId} = z.object({mode:z.enum(["practice","live"]),ranked:z.boolean().default(false),personalitiesEnabled:z.boolean().default(false),requestId:uuid}).parse(body);
   const previous = await db().prepare("SELECT * FROM sessions WHERE id=? AND user_id=?").bind(requestId,who.id).first<SessionRow>();
@@ -103,12 +128,16 @@ export async function startSession(who: Identity, body: unknown) {
   }
   const now=Date.now(), week=weekWindow(now).week;
   const game=createGame(requestId,mode,ranked,now,modelIds(),personalitiesEnabled);
-  const result=await db().prepare(`INSERT INTO sessions(id,user_id,week,mode,ranked,status,version,state,created_at,updated_at,lock_until)
+  const state = JSON.stringify(game);
+  const [result] = await db().batch([db().prepare(`INSERT INTO sessions(id,user_id,week,mode,ranked,status,version,state,created_at,updated_at,lock_until)
     SELECT ?,?,?,?,?, 'playing',0,?,?,?,0
     WHERE NOT EXISTS(SELECT 1 FROM sessions WHERE user_id=? AND status IN ('playing','hand_complete'))
     AND (?=0 OR (SELECT COUNT(*) FROM sessions WHERE user_id=? AND week=? AND ranked=1)<3)
     AND (?!='live' OR (SELECT COUNT(*) FROM sessions WHERE user_id=? AND mode='live' AND created_at>?)<6)`)
-    .bind(requestId,who.id,week,mode,ranked?1:0,JSON.stringify(game),now,now,who.id,ranked?1:0,who.id,week,mode,who.id,now-86400000).run();
+    .bind(requestId,who.id,week,mode,ranked?1:0,state,now,now,who.id,ranked?1:0,who.id,week,mode,who.id,now-86400000),
+    db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,0,? WHERE EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=0 AND state=?)")
+      .bind(requestId, JSON.stringify(createReplayFrame(game, "deal", now)), requestId, who.id, state),
+  ]);
   if (!result.meta.changes) {
     const existing=await activeRow(who.id); if(existing) return rowView(existing);
     throw new GameError("No ranked starts remain for this week.",409);
@@ -144,8 +173,16 @@ export async function executeCommand(who: Identity,id: string,body: unknown) {
     if (row.week!==weekWindow().week) {game.rankEligible=false;game.notice="This run crossed the weekly reset and is no longer eligible for the leaderboard.";}
     const view=viewGame(game), completed=view.status==="complete";
     const score=completed && game.rankEligible ? Math.round(view.pnl*120000) : null;
-    const saved=await db().prepare("UPDATE sessions SET state=?,status=?,version=?,updated_at=?,final_pnl=?,lock_token=NULL,lock_until=0 WHERE id=? AND lock_token=? AND version=?")
-      .bind(JSON.stringify(game),view.status,game.version,Date.now(),score,id,token,row.version).run();
+    const state = JSON.stringify(game);
+    const statements = [db().prepare("UPDATE sessions SET state=?,status=?,version=?,updated_at=?,final_pnl=?,lock_token=NULL,lock_until=0 WHERE id=? AND lock_token=? AND version=?")
+      .bind(state,view.status,game.version,Date.now(),score,id,token,row.version)];
+    if (game.replayVersion === 1 && shouldRecordReplay(original, game, command.type)) {
+      statements.push(db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=? AND state=?)")
+        .bind(id, game.version, JSON.stringify(createReplayFrame(game, command.type, now)), id, who.id, game.version, state));
+    }
+    // State and recording commit in one transaction: failures create neither
+    // phantom replay steps nor missing steps for a successful command.
+    const [saved] = await db().batch(statements);
     if (!saved.meta.changes) throw new GameError("The game changed while this action was running. Reload to continue.",409,"stale_state");
     return view;
   } finally {
