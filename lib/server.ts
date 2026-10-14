@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 import { cookies } from "next/headers";
 import { getChatGPTUser } from "../app/chatgpt-auth";
-import { GameError, commandGame, createGame, viewGame } from "./game";
-import type { Game } from "./game";
+import { GameError, commandGame, createGame, preparePokerDecision, viewGame } from "./game";
+import type { Game, PreparedPokerDecision } from "./game";
 import { createReplayFrame, shouldRecordReplay } from "./replay";
 import { DEFAULT_MODELS, ProviderError, requestDecision } from "./providers";
 import { PROVIDERS } from "./poker";
@@ -10,15 +10,15 @@ import type { Bootstrap, CommandRequest, GameMode, LeaderboardEntry, Profile, Se
 import { z } from "zod";
 
 type Identity = { id: string; authenticated: boolean };
-type SessionRow = { id: string; user_id: string; state: string; status: string; version: number; lock_until: number; week: string; ranked: number; mode: GameMode; updated_at: number };
+type SessionRow = { id: string; user_id: string; state: string; status: string; version: number; lock_until: number; lock_token: string | null; week: string; ranked: number; mode: GameMode; updated_at: number };
 const uuid = z.string().uuid();
 const commandSchema = z.intersection(z.object({requestId: uuid}), z.discriminatedUnion("type", [
   z.object({type: z.literal("advance"), pokerRevision: z.number().int().nonnegative()}),
   z.object({type: z.literal("next_hand"), pokerRevision: z.number().int().nonnegative()}),
   z.object({type: z.literal("tick")}),
   z.object({type: z.literal("playback"), paused: z.boolean()}),
-  z.object({type: z.literal("cancel"), pokerRevision:z.number().int().nonnegative(), orderId: z.string().min(1).max(100)}),
-  z.object({type: z.literal("order"), pokerRevision:z.number().int().nonnegative(), outcome: z.number().int().min(0).max(3), side: z.enum(["buy","sell"]), quantity: z.number().int().min(1).max(100000), limitPrice: z.number().min(.01).max(.99), orderType: z.enum(["ioc","limit"])}),
+  z.object({type: z.literal("cancel"), hand: z.number().int().min(1).max(5).optional(), pokerRevision:z.number().int().nonnegative(), orderId: z.string().min(1).max(100)}),
+  z.object({type: z.literal("order"), hand: z.number().int().min(1).max(5).optional(), pokerRevision:z.number().int().nonnegative(), outcome: z.number().int().min(0).max(3), side: z.enum(["buy","sell"]), quantity: z.number().int().min(1).max(100000), limitPrice: z.number().min(.01).max(.99), orderType: z.enum(["ioc","limit"])}),
 ]));
 function db() { if (!env.DB) throw new GameError("Game storage is temporarily unavailable.", 503); return env.DB; }
 export function weekWindow(now = Date.now()) {
@@ -135,7 +135,7 @@ export async function startSession(who: Identity, body: unknown) {
     AND (?=0 OR (SELECT COUNT(*) FROM sessions WHERE user_id=? AND week=? AND ranked=1)<3)
     AND (?!='live' OR (SELECT COUNT(*) FROM sessions WHERE user_id=? AND mode='live' AND created_at>?)<6)`)
     .bind(requestId,who.id,week,mode,ranked?1:0,state,now,now,who.id,ranked?1:0,who.id,week,mode,who.id,now-86400000),
-    db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,0,? WHERE EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=0 AND state=?)")
+    db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,0,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=0 AND state=?)")
       .bind(requestId, JSON.stringify(createReplayFrame(game, "deal", now)), requestId, who.id, state),
   ]);
   if (!result.meta.changes) {
@@ -144,47 +144,76 @@ export async function startSession(who: Identity, body: unknown) {
   }
   return viewGame(game);
 }
-export async function executeCommand(who: Identity,id: string,body: unknown) {
-  const command=commandSchema.parse(body) as CommandRequest;
-  const row=await ownedRow(id,who);
-  if(row.status==="abandoned") throw new GameError("This run has ended. Start a new run.",409,"run_ended");
-  const original=JSON.parse(row.state) as Game;
-  if (original.requestIds.includes(command.requestId)) return rowView(row);
-  const now=Date.now(),token=crypto.randomUUID();
-  const acquired=await db().prepare("UPDATE sessions SET lock_token=?,lock_until=? WHERE id=? AND user_id=? AND version=? AND lock_until<? AND status!='abandoned'")
-    .bind(token,now+55000,id,who.id,row.version,now).run();
-  if (!acquired.meta.changes) throw new GameError("Another action is finishing. Try again in a moment.",409,"busy");
-  try {
-    if(original.pausedAt!==undefined && command.type!=="playback" && command.type!=="tick") {
-      throw new GameError("The game is paused. Press Play to continue trading and gameplay.",409,"GAME_PAUSED");
-    }
-    // Reserve both possible API attempts durably, including failed requests.
-    if(original.mode==="live" && command.type==="advance") {
-      if(!liveReady()) throw new GameError("Live model access is awaiting activation. You can end this run and play practice.",503,"provider_unavailable");
-      if(command.pokerRevision!==original.poker.revision) throw new GameError("The table has advanced.",409,"stale_state");
-      const budget=await db().prepare("UPDATE sessions SET provider_calls=provider_calls+2 WHERE id=? AND lock_token=? AND provider_calls<=318").bind(id,token).run();
-      if(!budget.meta.changes) throw new GameError("This run has used its model-call allowance.",429,"call_limit");
-    }
-    if(original.requestIds.length>=10000 && command.type!=="tick") throw new GameError("This run has reached its action limit.",429);
-    const game=await commandGame(original,command,now,env.AI_GATEWAY_API_KEY ? (obs,model,feedback)=>requestDecision(obs,model,env.AI_GATEWAY_API_KEY!,feedback) : undefined);
-    game.version=row.version+1;
-    if(command.type!=="tick") game.requestIds=[...game.requestIds,command.requestId];
-    // A ranked run must finish in the week it started. Its gameplay remains available.
-    if (row.week!==weekWindow().week) {game.rankEligible=false;game.notice="This run crossed the weekly reset and is no longer eligible for the leaderboard.";}
-    const view=viewGame(game), completed=view.status==="complete";
-    const score=completed && game.rankEligible ? Math.round(view.pnl*120000) : null;
+type PokerLease = { token: string; pokerRevision: number; hand: number; decision?: PreparedPokerDecision };
+
+/** Market commits preserve any pending poker lease and retry only the short state transaction. */
+async function saveCommand(who: Identity, id: string, command: CommandRequest, lease?: PokerLease): Promise<SessionView> {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const row = await ownedRow(id, who);
+    if (row.status === "abandoned") throw new GameError("This run has ended. Start a new run.",409,"run_ended");
+    const original = JSON.parse(row.state) as Game;
+    if (original.requestIds.includes(command.requestId)) return rowView(row);
+    const now = Date.now();
+    if (lease && (row.lock_token !== lease.token || row.lock_until <= now || original.hand !== lease.hand || original.poker.revision !== lease.pokerRevision))
+      throw new GameError("The table changed while the decision was running. Refresh to continue.",409,"stale_state");
+    if (original.requestIds.length >= 10000 && command.type !== "tick") throw new GameError("This run has reached its action limit.",429);
+    const game = await commandGame(original, command, now, undefined, lease?.decision);
+    game.version = row.version + 1;
+    if (command.type !== "tick") game.requestIds = [...game.requestIds, command.requestId];
+    if (row.week !== weekWindow().week) { game.rankEligible = false; game.notice = "This run crossed the weekly reset and is no longer eligible for the leaderboard."; }
+    const view = viewGame(game, !lease && row.lock_until > now), completed = view.status === "complete";
+    const score = completed && game.rankEligible ? Math.round(view.pnl * 120000) : null;
     const state = JSON.stringify(game);
-    const statements = [db().prepare("UPDATE sessions SET state=?,status=?,version=?,updated_at=?,final_pnl=?,lock_token=NULL,lock_until=0 WHERE id=? AND lock_token=? AND version=?")
-      .bind(state,view.status,game.version,Date.now(),score,id,token,row.version)];
-    if (game.replayVersion === 1 && shouldRecordReplay(original, game, command.type)) {
-      statements.push(db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=? AND state=?)")
-        .bind(id, game.version, JSON.stringify(createReplayFrame(game, command.type, now)), id, who.id, game.version, state));
+    const update = lease
+      ? db().prepare("UPDATE sessions SET state=?,status=?,version=?,updated_at=?,final_pnl=?,lock_token=NULL,lock_until=0 WHERE id=? AND user_id=? AND version=? AND lock_token=? AND lock_until>? AND status!='abandoned'")
+        .bind(state,view.status,game.version,now,score,id,who.id,row.version,lease.token,now)
+      : db().prepare("UPDATE sessions SET state=?,status=?,version=?,updated_at=?,final_pnl=? WHERE id=? AND user_id=? AND version=? AND status!='abandoned'")
+        .bind(state,view.status,game.version,now,score,id,who.id,row.version);
+    const statements = [update];
+    if (game.replayVersion === 1 && shouldRecordReplay(original,game,command.type)) {
+      statements.push(db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,?,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=? AND state=?)")
+        .bind(id,game.version,JSON.stringify(createReplayFrame(game,command.type,now)),id,who.id,game.version,state));
     }
-    // State and recording commit in one transaction: failures create neither
-    // phantom replay steps nor missing steps for a successful command.
+    // A losing compare-and-swap records no frame; the state and frame remain atomic.
     const [saved] = await db().batch(statements);
-    if (!saved.meta.changes) throw new GameError("The game changed while this action was running. Reload to continue.",409,"stale_state");
-    return view;
+    if (saved.meta.changes) return view;
+  }
+  throw new GameError("The market is updating. Try this order again.",409,"busy");
+}
+
+export async function executeCommand(who: Identity, id: string, body: unknown) {
+  const command = commandSchema.parse(body) as CommandRequest;
+  if (command.type !== "advance" && command.type !== "next_hand") return saveCommand(who,id,command);
+  const token = crypto.randomUUID();
+  let original: Game | undefined;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const row = await ownedRow(id,who);
+    if (row.status === "abandoned") throw new GameError("This run has ended. Start a new run.",409,"run_ended");
+    const game = JSON.parse(row.state) as Game;
+    if (game.requestIds.includes(command.requestId)) return rowView(row);
+    if (game.requestIds.length >= 10000) throw new GameError("This run has reached its action limit.",429);
+    if (game.pausedAt !== undefined) throw new GameError("The game is paused. Press Play to continue trading and gameplay.",409,"GAME_PAUSED");
+    if (command.pokerRevision !== game.poker.revision) throw new GameError("The table has advanced.",409,"stale_state");
+    const now = Date.now();
+    if (row.lock_until > now) throw new GameError("Another poker action is finishing.",409,"busy");
+    const acquired = await db().prepare("UPDATE sessions SET lock_token=?,lock_until=? WHERE id=? AND user_id=? AND version=? AND lock_until<? AND status!='abandoned'")
+      .bind(token,now+55000,id,who.id,row.version,now).run();
+    if (acquired.meta.changes) { original = game; break; }
+  }
+  if (!original) throw new GameError("The table is updating. Try again.",409,"busy");
+  try {
+    const lease: PokerLease = { token, pokerRevision: original.poker.revision, hand: original.hand };
+    if (command.type === "advance") {
+      if (original.mode === "live") {
+        if (!liveReady()) throw new GameError("Live model access is awaiting activation.",503,"provider_unavailable");
+        // Reserve both possible provider attempts durably, even when a request fails.
+        const budget = await db().prepare("UPDATE sessions SET provider_calls=provider_calls+2 WHERE id=? AND lock_token=? AND provider_calls<=318").bind(id,token).run();
+        if (!budget.meta.changes) throw new GameError("This run has used its model-call allowance.",429,"call_limit");
+      }
+      lease.decision = await preparePokerDecision(original, env.AI_GATEWAY_API_KEY ? (obs,model,feedback) => requestDecision(obs,model,env.AI_GATEWAY_API_KEY!,feedback) : undefined);
+    }
+    // Apply the already-chosen action to the latest market, preserving concurrent trades.
+    return await saveCommand(who,id,command,lease);
   } finally {
     await db().prepare("UPDATE sessions SET lock_token=NULL,lock_until=0 WHERE id=? AND lock_token=?").bind(id,token).run();
   }

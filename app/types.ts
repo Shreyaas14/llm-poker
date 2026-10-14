@@ -40,8 +40,8 @@ export type SessionCommand =
   | { type: "next_hand"; pokerRevision: number }
   | { type: "playback"; paused: boolean }
   | { type: "tick" }
-  | { type: "order"; pokerRevision: number; outcome: number; side: "buy" | "sell"; quantity: number; limitPrice: number; orderType: "ioc" | "limit" }
-  | { type: "cancel"; pokerRevision: number; orderId: string };
+  | { type: "order"; hand?: number; pokerRevision: number; outcome: number; side: "buy" | "sell"; quantity: number; limitPrice: number; orderType: "ioc" | "limit" }
+  | { type: "cancel"; hand?: number; pokerRevision: number; orderId: string };
 export type CommandRequest = SessionCommand & { requestId: string };
 export type CompletedGame = {
   id: string; mode: GameMode; ranked: boolean; pnl: number;

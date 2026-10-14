@@ -24,6 +24,7 @@ export default function Home() {
   const [session, setSession] = useState<SessionView | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [tradingBusy, setTradingBusy] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -41,6 +42,9 @@ export default function Home() {
   const sessionRef = useRef<SessionView | null>(null);
   const commandQueue = useRef<Promise<void>>(Promise.resolve());
   const commandCount = useRef(0);
+  const marketQueue = useRef<Promise<void>>(Promise.resolve());
+  const marketCount = useRef(0);
+  const tickPending = useRef(false);
   const mounted = useRef(true);
   const playbackIntent = useRef(false);
   const playbackRequest = useRef<boolean | null>(null);
@@ -86,11 +90,16 @@ export default function Home() {
     const current = sessionRef.current;
     if (!current) return;
     const background = command.type === "tick";
-    if (background && commandCount.current > 0) return;
-    commandCount.current++;
-    if (!background) { setBusy(true); setError(null); }
+    const poker = command.type === "advance" || command.type === "next_hand";
+    const trading = command.type === "order" || command.type === "cancel";
+    if (background && (tickPending.current || marketCount.current > 0)) return;
+    if (background) tickPending.current = true;
+    if (poker) { commandCount.current++; setBusy(true); }
+    if (trading) { marketCount.current++; setTradingBusy(true); }
+    if (!background) setError(null);
     if (command.type === "advance") setAdvancing(true);
-    const action = commandQueue.current.catch(() => {}).then(async () => {
+    const queue = poker ? commandQueue : marketQueue;
+    const action = queue.current.catch(() => {}).then(async () => {
       try {
         const next = await request<SessionView>(`/api/session/${current.id}/command`, { method: "POST", body: JSON.stringify({ ...command, requestId: crypto.randomUUID() }) });
         if (sessionRef.current?.id !== current.id) return;
@@ -114,12 +123,13 @@ export default function Home() {
           }
         }
       } finally {
-        commandCount.current--;
-        if (!background && mounted.current) setBusy(false);
+        if (background) tickPending.current = false;
+        if (poker) { commandCount.current--; if (mounted.current) setBusy(commandCount.current > 0); }
+        if (trading) { marketCount.current--; if (mounted.current) setTradingBusy(marketCount.current > 0); }
         if (command.type === "advance" && mounted.current) setAdvancing(false);
       }
     });
-    commandQueue.current = action;
+    queue.current = action;
     await action;
   }, [acceptSession, loadBootstrap]);
 
@@ -180,7 +190,7 @@ export default function Home() {
   async function startGame(mode: GameMode, ranked: boolean, personalitiesEnabled: boolean) {
     setBusy(true); setError(null);
     try {
-      await commandQueue.current;
+      await Promise.all([commandQueue.current, marketQueue.current]);
       const next = await request<SessionView>("/api/session", { method: "POST", body: JSON.stringify({ mode, ranked, personalitiesEnabled, requestId: crypto.randomUUID() }) });
       acceptSession(next); setTab("table"); playbackIntent.current = !next.paused; setAutoPlay(!next.paused); setCountdown(pace); setAnnouncement(next.paused ? "Challenge restored. Press Play to resume." : "Challenge started. The game and market are live.");
       void loadBootstrap().catch(() => {});
@@ -202,7 +212,7 @@ export default function Home() {
     if (!session) return;
     playbackIntent.current = false; setAutoPlay(false); setBusy(true); setError(null);
     try {
-      await commandQueue.current;
+      await Promise.all([commandQueue.current, marketQueue.current]);
       await request<{ ok: true }>(`/api/session/${session.id}`, { method: "DELETE", body: "{}" });
       sessionRef.current = null; setSession(null); setConfirmEnd(false);
       setAnnouncement("Run ended. You can start a new challenge.");
@@ -222,7 +232,7 @@ export default function Home() {
   const pauseUnconfirmed = Boolean(session && !isComplete && !autoPlay && !session.paused && !playbackChanging);
   const leaderboard = boardMode === "live" ? bootstrap?.leaderboard ?? [] : bootstrap?.practiceLeaderboard ?? [];
   const pnl = session?.pnl ?? 0;
-  const rules = <details className="rules-details" id="how-it-works" open={rulesOpen} onToggle={e => setRulesOpen(e.currentTarget.open)}><summary>How VESPER works</summary><div className="rules-content"><p><strong>The challenge:</strong> begin with 1,000 play-money credits and trade across five poker hands. You are a spectator and a trader; the four models are the poker players. Each new hand starts a new outcome market, and your credits carry forward.</p><p><strong>Your information:</strong> every dealt hole card is visible to you. The models only receive their own cards and the public table. Future community cards stay hidden until dealt. Personalities are off by default. Enable them before starting a challenge to shuffle four playing classes across the models: Shark, Bully, Maniac, and Opportunist. Classes stay assigned for all five hands. Hover, focus, or tap a class for its style; these are tendencies, so any model can still bluff or fold.</p><p><strong>The market:</strong> 16 synthetic traders place funded bids and asks and take actual positions when orders match. The trader panel shows holdings, net shares bought or sold, and recent executions. Makers begin each hand with 700 shares of every outcome; other traders begin with 240. These collateral-backed opening inventories are separate from their trades. A changed quote alone does not change anyone’s position; a fill does. At settlement, shares are redeemed and holdings return to zero. You can buy available shares at the shown ask, sell shares you own at the shown bid, or place a limit order. Orders can fill partly, and prices can change. Normal advances the game automatically after 6 seconds by default, or 3 seconds at Fast speed. Realtime advances as soon as each response completes, with no added pause between actions or hands. Entering and submitting orders keeps the game running. Pause freezes the game and market: no orders, cancellations, or synthetic fills occur until Play resumes them. Switching away from this tab also pauses play. Each action allows up to 45 seconds of active trading time. Unfilled immediate orders cancel; resting limit orders can carry across actions until filled, cancelled, or the hand settles.</p><p><strong>Settlement:</strong> a share in the sole main-pot winner pays 1 credit. If the main pot is tied, the winners split that credit equally. All other shares pay zero. Side-pot winners do not determine the contract. Outstanding orders cancel when the hand settles.</p><p><strong>Scoring:</strong> final PnL is your credits after five hands minus the starting 1,000. During play, account value uses available bids, so shares without buyers are conservatively marked at zero. Practice and live models have separate weekly leaderboards. Your best completed score from your first three ranked starts each week counts. Practice and live share that three-start allowance. An unfinished or abandoned ranked start still uses an attempt. Ranked challenges require sign-in and a username.</p><p><strong>Practice versus live:</strong> practice uses local decision models with a neutral policy, or distinct playing styles when personalities are enabled. Live mode calls the actual GPT, Claude, Gemini, and Grok providers when connected. This is a play-money game, with no deposits, withdrawals, or prizes.</p></div></details>;
+  const rules = <details className="rules-details" id="how-it-works" open={rulesOpen} onToggle={e => setRulesOpen(e.currentTarget.open)}><summary>How VESPER works</summary><div className="rules-content"><p><strong>The challenge:</strong> begin with 1,000 play-money credits and trade across five poker hands. You are a spectator and a trader; the four models are the poker players. Each new hand starts a new outcome market, and your credits carry forward.</p><p><strong>Your information:</strong> every dealt hole card is visible to you. The models only receive their own cards and the public table. Future community cards stay hidden until dealt. Personalities are off by default. Enable them before starting a challenge to shuffle four playing classes across the models: Shark, Bully, Maniac, and Opportunist. Classes stay assigned for all five hands. Hover, focus, or tap a class for its style; these are tendencies, so any model can still bluff or fold.</p><p><strong>The market:</strong> 16 synthetic traders place funded bids and asks and take actual positions when orders match. The trader panel shows holdings, net shares bought or sold, and recent executions. Makers begin each hand with 700 shares of every outcome; other traders begin with 240. These collateral-backed opening inventories are separate from their trades. A changed quote alone does not change anyone’s position; a fill does. At settlement, shares are redeemed and holdings return to zero. You can buy available shares at the shown ask, sell shares you own at the shown bid, or place a limit order. Orders can fill partly, and prices can change. Normal advances the game automatically after 6 seconds by default, or 3 seconds at Fast speed. Realtime advances as soon as each response completes, with no added pause between actions or hands. Entering and submitting orders keeps the game running. Pause freezes the game and market: no orders, cancellations, or synthetic fills occur until Play resumes them. Switching away from this tab also pauses play. You can submit and cancel orders while a model is deciding, until the hand settles. Your order keeps its maximum buy or minimum sell price as the table changes. Synthetic quote arrivals stop after 45 seconds without a new poker action. Unfilled immediate orders cancel; resting limit orders can carry across actions until filled, cancelled, or the hand settles.</p><p><strong>Settlement:</strong> a share in the sole main-pot winner pays 1 credit. If the main pot is tied, the winners split that credit equally. All other shares pay zero. Side-pot winners do not determine the contract. Outstanding orders cancel when the hand settles.</p><p><strong>Scoring:</strong> final PnL is your credits after five hands minus the starting 1,000. During play, account value uses available bids, so shares without buyers are conservatively marked at zero. Practice and live models have separate weekly leaderboards. Your best completed score from your first three ranked starts each week counts. Practice and live share that three-start allowance. An unfinished or abandoned ranked start still uses an attempt. Ranked challenges require sign-in and a username.</p><p><strong>Practice versus live:</strong> practice uses local decision models with a neutral policy, or distinct playing styles when personalities are enabled. Live mode calls the actual GPT, Claude, Gemini, and Grok providers when connected. This is a play-money game, with no deposits, withdrawals, or prizes.</p></div></details>;
 
   return <div className="app-shell">
     <a className="skip-link" href="#main">Skip to game</a>
@@ -241,8 +251,8 @@ export default function Home() {
           {session ? <PositionsStrip session={session} /> : null}
           <PokerTable seats={seats} board={session?.board ?? []} pot={session?.pot ?? 0} winningCards={session?.winningCards ?? []} street={session?.street ?? "preflop"} started={Boolean(session)} busy={thinking} settled={Boolean(session && session.status !== "playing")} />
           {session ? <div className="table-controls"><div className="event-summary-wrap"><div className="event-summary"><strong>{loading ? "Connecting to the table…" : !session ? "Ready to deal." : isComplete ? "Five hands complete." : isHandComplete ? session.results.at(-1)?.description ?? "This hand has settled." : latestPokerAction?.text ?? "Cards dealt. Trading is open."}</strong><p>{!session ? "Start a challenge to deal the first hand." : isComplete ? "Final score settled." : isHandComplete ? `Hand PnL: ${signed(session.results.at(-1)?.pnl ?? 0)} credits. Outstanding orders are closed.` : !autoPlay ? pauseUnconfirmed ? "Pause not confirmed. Retry to freeze the market." : "Paused · Trading disabled" : session.tradingOpen ? "" : "Trading reopens after the next action."}</p></div></div>{session && !isComplete ? <div className="playback-controls" aria-label="Playback controls"><div className="playback-options"><button type="button" className={`secondary-button playback-toggle ${autoPlay ? "is-playing" : ""}`} aria-pressed={autoPlay} onClick={() => void changePlayback(pauseUnconfirmed || autoPlay)} disabled={playbackChanging || confirmEnd}>{autoPlay ? <Pause size={13} /> : <Play size={13} />}{pauseUnconfirmed ? "Retry pause" : autoPlay ? "Pause" : "Play"}</button><label className="speed-picker"><span className="sr-only">Playback speed</span><select aria-label="Playback speed" value={pace} onChange={e => { const nextPace = Number(e.target.value) as PlayPace; setPace(nextPace); setCountdown(playbackDelay(nextPace, Boolean(isHandComplete))); }}><option value={6}>Normal · 6s</option><option value={3}>Fast · 3s</option><option value={0}>Realtime · no delay</option></select><ChevronDown className="speed-picker-arrow" size={13} aria-hidden="true" /></label><span className="playback-state" aria-live="off">{playbackChanging ? "Updating playback…" : pauseUnconfirmed ? "Pause not confirmed" : thinking ? `${session.players.find(p => p.seat === session.actor)?.name ?? "Model"} deciding…` : autoPlay ? pace === 0 ? "Realtime · no added delay" : `${isHandComplete ? "Next hand" : "Next action"} in ${countdown}s` : "Paused"}</span></div></div> : <button type="button" className="text-button" onClick={showRules}>How to play</button>}</div> : null}
-          {session ? <><MarketAnalytics session={session} /><div className="lower-layout"><section className="small-panel"><div className="section-title"><h2>Open orders</h2><span>{session.market.openOrders.length}</span></div>{session.market.openOrders.length ? session.market.openOrders.map(order => <div className="order-row" key={order.id}><span>{order.side === "buy" ? "Buy" : "Sell"} {order.remainingQuantity} {session.players.find(p => p.seat === order.outcome)?.name} at {price(order.limitPrice)}</span><button type="button" className="cancel-button" aria-label={`Cancel order to ${order.side} ${order.remainingQuantity} shares`} disabled={busy || !autoPlay || session.paused || playbackChanging} onClick={() => void runCommand({ type: "cancel", pokerRevision: session.pokerRevision, orderId: order.id })}>Cancel</button></div>) : <div className="empty-state">No open orders.</div>}</section><section className="small-panel"><div className="section-title"><h2>Table activity</h2><span>{session ? `Hand ${session.hand}` : "Recent actions"}</span></div>{session?.activity.length ? <div className="activity-list">{session.activity.slice(-10).reverse().map((activity, i) => <div className="activity-row" key={activity.id}><span className="activity-index">{String(session.activity.length - i).padStart(2, "0")}</span><div>{activity.text}<small>{activity.kind === "trade" ? "Your trade" : activity.kind === "system" ? "Table update" : `Hand ${activity.hand}`}</small></div></div>)}</div> : <div className="empty-state">No activity yet.<p>Poker actions and trades appear here.</p></div>}</section></div><TraderActivity session={session} /></> : null}
-        </div><div className="market-column"><MarketPanel session={session} bootstrap={bootstrap} busy={busy || loading} playing={autoPlay && !session?.paused && !playbackChanging} onCommand={runCommand} onStart={startGame} /></div></div>
+          {session ? <><MarketAnalytics session={session} /><div className="lower-layout"><section className="small-panel"><div className="section-title"><h2>Open orders</h2><span>{session.market.openOrders.length}</span></div>{session.market.openOrders.length ? session.market.openOrders.map(order => <div className="order-row" key={order.id}><span>{order.side === "buy" ? "Buy" : "Sell"} {order.remainingQuantity} {session.players.find(p => p.seat === order.outcome)?.name} at {price(order.limitPrice)}</span><button type="button" className="cancel-button" aria-label={`Cancel order to ${order.side} ${order.remainingQuantity} shares`} disabled={tradingBusy || !autoPlay || session.paused || playbackChanging} onClick={() => void runCommand({ type: "cancel", hand: session.hand, pokerRevision: session.pokerRevision, orderId: order.id })}>Cancel</button></div>) : <div className="empty-state">No open orders.</div>}</section><section className="small-panel"><div className="section-title"><h2>Table activity</h2><span>{session ? `Hand ${session.hand}` : "Recent actions"}</span></div>{session?.activity.length ? <div className="activity-list">{session.activity.slice(-10).reverse().map((activity, i) => <div className="activity-row" key={activity.id}><span className="activity-index">{String(session.activity.length - i).padStart(2, "0")}</span><div>{activity.text}<small>{activity.kind === "trade" ? "Your trade" : activity.kind === "system" ? "Table update" : `Hand ${activity.hand}`}</small></div></div>)}</div> : <div className="empty-state">No activity yet.<p>Poker actions and trades appear here.</p></div>}</section></div><TraderActivity session={session} /></> : null}
+        </div><div className="market-column"><MarketPanel session={session} bootstrap={bootstrap} busy={loading || (!session ? busy : tradingBusy)} playing={autoPlay && !session?.paused && !playbackChanging} onCommand={runCommand} onStart={startGame} /></div></div>
 
       </>}
       {rules}
