@@ -57,11 +57,12 @@ async function board(mode: GameMode, id: string): Promise<LeaderboardEntry[]> {
 async function activeRow(id: string) {
   return db().prepare("SELECT * FROM sessions WHERE user_id=? AND status IN ('playing','hand_complete') ORDER BY created_at DESC LIMIT 1").bind(id).first<SessionRow>();
 }
-export async function bootstrap(who: Identity): Promise<Bootstrap> {
+export async function bootstrap(who: Identity, includeSession = false): Promise<Bootstrap> {
   const [profile, leaderboard, practiceLeaderboard, active] = await Promise.all([profileFor(who.id),board("live",who.id),board("practice",who.id),activeRow(who.id)]);
   return {authenticated:who.authenticated, profile, liveAvailable:liveReady(), liveUnavailableReason:liveReady() ? null : "Live model access is awaiting activation. Practice is ready to play.",
     models:modelIds().map((modelId,seat)=>({seat,name:PROVIDERS[seat],modelId})),
-    leaderboard, practiceLeaderboard, ...weekWindow(), activeSessionId:active?.id??null};
+    leaderboard, practiceLeaderboard, ...weekWindow(), activeSessionId:active?.id??null,
+    ...(includeSession ? { activeSession: active ? rowView(active) : null } : {})};
 }
 export async function saveProfile(who: Identity, body: unknown): Promise<Profile> {
   if (!who.authenticated) throw new GameError("Sign in to choose a leaderboard name.",401,"sign_in_required");

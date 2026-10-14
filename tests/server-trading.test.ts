@@ -367,3 +367,22 @@ test('unranked live runs retain their per-run provider call allowance',async()=>
   assert.equal(modelCalls,0);
   assert.equal(storage.prepare('SELECT provider_calls FROM sessions WHERE id=?').get(game.id)!.provider_calls,320);
 });
+
+// Embedded bootstrap session regressions, separate from live-start policy tests.
+test('bootstrap can embed the owned session without exposing it to another account',async()=>{
+  const {owner,game}=await start();
+  const embedded=await server.bootstrap(owner,true);
+  assert.equal(embedded.activeSessionId,game.id);
+  assert.deepEqual(embedded.activeSession,await server.getSession(owner,game.id));
+  const other=await server.bootstrap({id:crypto.randomUUID(),authenticated:true},true);
+  assert.equal(other.activeSessionId,null);
+  assert.equal(other.activeSession,null);
+});
+
+test('compact bootstrap keeps the active ID without serializing its session',async()=>{
+  const {owner,game}=await start();
+  for(const result of [await server.bootstrap(owner),await server.bootstrap(owner,false)]) {
+    assert.equal(result.activeSessionId,game.id);
+    assert.equal(Object.hasOwn(result,'activeSession'),false);
+  }
+});

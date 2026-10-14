@@ -59,24 +59,24 @@ export default function Home() {
     }
   }, []);
 
-  const loadBootstrap = useCallback(async () => {
-    const data = await request<Bootstrap>("/api/bootstrap");
+  const loadBootstrap = useCallback(async (includeSession = false) => {
+    const data = await request<Bootstrap>(includeSession ? "/api/bootstrap?includeSession=1" : "/api/bootstrap", includeSession ? { signal: AbortSignal.timeout(15000) } : undefined);
     if (mounted.current) { setBootstrap(data); setUsername(data.profile?.username ?? ""); }
     return data;
   }, []);
 
   const initialize = useCallback(async () => {
     try {
-      const data = await loadBootstrap();
+      const data = await loadBootstrap(true);
       if (data.activeSessionId) {
-        let resumed = await request<SessionView>(`/api/session/${data.activeSessionId}`);
+        let resumed = data.activeSession ?? await request<SessionView>(`/api/session/${data.activeSessionId}`, { signal: AbortSignal.timeout(15000) });
         acceptSession(resumed);
         if (resumed.status !== "complete" && !resumed.paused) {
-          resumed = await request<SessionView>(`/api/session/${resumed.id}/command`, { method: "POST", body: JSON.stringify({ type: "playback", paused: true, requestId: crypto.randomUUID() }) });
+          resumed = await request<SessionView>(`/api/session/${resumed.id}/command`, { method: "POST", signal: AbortSignal.timeout(15000), body: JSON.stringify({ type: "playback", paused: true, requestId: crypto.randomUUID() }) });
         }
         acceptSession(resumed);
       }
-    } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : "The table could not be loaded."); }
+    } catch (e) { if (mounted.current) setError(e instanceof Error && e.name === "TimeoutError" ? "The connection took too long. Please retry loading the table." : e instanceof Error ? e.message : "The table could not be loaded."); }
     finally { if (mounted.current) setLoading(false); }
   }, [acceptSession, loadBootstrap]);
 
@@ -236,7 +236,7 @@ export default function Home() {
 
   return <div className="app-shell">
     <a className="skip-link" href="#main">Skip to game</a>
-    <header className="site-header"><Link className="brand" href="/" aria-label="VESPER home"><img className="brand-logo" src="/vesper-logo-transparent.png" alt="VESPER" width={1536} height={1024} /></Link><nav className="header-nav" aria-label="Main navigation"><button className={`nav-link ${tab === "table" ? "active" : ""}`} type="button" onClick={() => setTab("table")}>Play</button><button className={`nav-link ${tab === "leaderboard" ? "active" : ""}`} type="button" onClick={() => { void changePlayback(true); setTab("leaderboard"); }}>Leaderboard</button><button className="nav-link" type="button" onClick={showRules}>How to Play</button><button className={`nav-link ${tab === "games" ? "active" : ""}`} type="button" onClick={() => { void changePlayback(true); setInitialReplayId(null); setTab("games"); }}>Your Games</button></nav>{bootstrap?.authenticated ? <button className="user-button" type="button" onClick={() => { void changePlayback(true); setProfileOpen(!profileOpen); }} aria-expanded={profileOpen} aria-label="Open your profile">{bootstrap.profile?.username ?? "Your profile"}</button> : <a className="user-button" href="/signin-with-chatgpt?return_to=/" target="_top" aria-label="Sign in with ChatGPT">Sign in</a>}</header>
+    <header className="site-header"><Link className="brand" href="/" aria-label="VESPER home"><img className="brand-logo" src="/vesper-logo-small.webp" alt="VESPER" width={240} height={160} decoding="async" /></Link><nav className="header-nav" aria-label="Main navigation"><button className={`nav-link ${tab === "table" ? "active" : ""}`} type="button" onClick={() => setTab("table")}>Play</button><button className={`nav-link ${tab === "leaderboard" ? "active" : ""}`} type="button" onClick={() => { void changePlayback(true); setTab("leaderboard"); }}>Leaderboard</button><button className="nav-link" type="button" onClick={showRules}>How to Play</button><button className={`nav-link ${tab === "games" ? "active" : ""}`} type="button" onClick={() => { void changePlayback(true); setInitialReplayId(null); setTab("games"); }}>Your Games</button></nav>{bootstrap?.authenticated ? <button className="user-button" type="button" onClick={() => { void changePlayback(true); setProfileOpen(!profileOpen); }} aria-expanded={profileOpen} aria-label="Open your profile">{bootstrap.profile?.username ?? "Your profile"}</button> : <a className="user-button" href="/signin-with-chatgpt?return_to=/" target="_top" aria-label="Sign in with ChatGPT">Sign in</a>}</header>
     <main id="main">
       <h1 className="sr-only">Poker prediction market</h1>
       {error ? <div className="error-banner" role="alert"><Info size={15} /><span>{error}{!bootstrap && !loading ? <button type="button" className="text-button" onClick={() => { setLoading(true); setError(null); void initialize(); }}>Retry connection <RotateCcw size={11} /></button> : null}</span><button type="button" aria-label="Dismiss error" onClick={() => setError(null)}><X size={14} /></button></div> : null}
