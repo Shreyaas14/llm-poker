@@ -5,7 +5,7 @@ const suits: Record<string, { symbol: string; name: string }> = {
 const ranks: Record<string, string> = { A: "Ace", K: "King", Q: "Queen", J: "Jack", T: "Ten" };
 
 export function PlayingCard({ card, small = false, ghost = false, winning = false }: { card?: string; small?: boolean; ghost?: boolean; winning?: boolean }) {
-  if (!card) return <div aria-label={ghost ? "Community card not dealt" : "Card not dealt"} className={`playing-card card-back ${small ? "card-small" : ""} ${ghost ? "card-ghost" : ""}`}><span aria-hidden="true">✦</span></div>;
+  if (!card) return <div role="img" aria-label={ghost ? "Community card not dealt" : "Card not dealt"} className={`playing-card card-back ${small ? "card-small" : ""} ${ghost ? "card-ghost" : ""}`} />;
   const suit = suits[card.slice(-1).toLowerCase()] ?? suits.s;
   const value = card.slice(0, -1).toUpperCase();
   const rank = value === "T" ? "10" : value;

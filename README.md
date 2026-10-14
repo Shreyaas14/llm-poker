@@ -2,6 +2,12 @@
 
 A play-money prediction market around four AI poker players. The human watches all dealt cards and trades outcome shares; the human never occupies a poker seat. Built with React, TypeScript, Vinext, Cloudflare D1, and Sites authentication/hosting.
 
+## Visual direction
+
+The minimal interface uses one near-white surface, dark typography, aligned numerical rows, and restrained separators. Player groups and market data are unframed; playing cards are the main tactile elements. Color identifies card suits, chart series, and PnL rather than decorating containers. Text states, keyboard focus, class descriptions, and labelled trading controls remain explicit. The selected outcome’s showdown equity sits beside its price; longer explanations live in disclosures.
+
+References: [Linear’s 2026 interface refresh](https://linear.app/now/behind-the-latest-design-refresh), [Vitsœ’s good design principles](https://www.vitsoe.com/rw/about/good-design), and [GOV.UK’s table guidance](https://design-system.service.gov.uk/components/table/).
+
 ## Game and market
 
 - Five independent four-seat no-limit Texas Hold'em hands; 1,000 poker chips per seat, rotating dealer, 5/10 blinds. The human starts with 1,000 trading credits and carries settled cash between hands.

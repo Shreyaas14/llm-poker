@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import type { SessionView } from "../../app/types";
 import type { TraderKind } from "../../lib/market";
 import "./trader-activity.css";
@@ -37,7 +36,7 @@ export function TraderActivity({ session }: { session: SessionView | null }) {
         <button type="button" aria-pressed={view === "holdings"} onClick={() => setView("holdings")}>Holdings</button>
       </div>
     </div>
-    <p className="trader-view-note">{view === "net" ? "Filled buys − sells this hand. + bought · − sold." : "Shares owned, including initial inventory: 700 per outcome for makers, 240 for others."}{settled ? " Settled: holdings redeemed; orders closed." : " Orders are unfilled quotes."}</p>
+    <p className="trader-view-note">{view === "net" ? "Bought − sold this hand." : "Shares owned, including starting inventory."}{settled ? " Holdings redeemed; orders closed." : ""}</p>
     {traders.length ? <div className="trader-table-scroll" tabIndex={0} role="region" aria-label="All trader positions, scroll to see more">
       <table className="trader-positions-table">
         <caption className="sr-only">{view === "net" ? "Net filled shares, excluding seeded inventory" : "Current shares owned"} for hand {session.hand}. Orders are the number of open orders.</caption>
@@ -53,12 +52,13 @@ export function TraderActivity({ session }: { session: SessionView | null }) {
       </table>
     </div> : <p className="trader-empty">Trader positions are available after the next market update.</p>}
     {view === "net" && traders.some(trader => trader.netFilledShares === null) ? <p className="trader-view-note">Net trades were not retained for this earlier settled hand.</p> : null}
+    {view === "holdings" ? <details className="trader-method"><summary>Starting inventory</summary><p>Makers start with 700 shares per outcome; other traders start with 240. Orders are unfilled quotes.</p></details> : null}
     <div className="trader-tape-heading"><h3>Latest fills</h3><span>Buyer ← seller</span></div>
     {trades.length ? <ol className="trader-tape">{trades.slice(0, 6).map(trade => {
       const model = session.players.find(player => player.seat === trade.outcome)?.name ?? `Outcome ${trade.outcome + 1}`;
       const yourTrade = trade.buyer.id === "human" || trade.seller.id === "human";
       return <li key={trade.id} className={yourTrade ? "trader-fill-your" : undefined} aria-label={`${trade.buyer.name} bought ${trade.quantity} ${model} shares from ${trade.seller.name} at ${Math.round(trade.price * 100)} cents per share at market second ${trade.tick}`}>
-        <div className="trader-fill-parties"><strong>{trade.buyer.name}</strong><ArrowLeft size={11} aria-hidden="true" /><span>{trade.seller.name}</span></div>
+        <div className="trader-fill-parties"><strong>{trade.buyer.name}</strong><span aria-hidden="true">←</span><span>{trade.seller.name}</span></div>
         <div className="trader-fill-detail"><span>{model} · {trade.quantity} shares @ {Math.round(trade.price * 100)}¢</span><span className="trader-fill-time">{trade.tick}s</span></div>
       </li>;
     })}</ol> : <p className="trader-empty">No fills yet. Quotes can move before a trade matches.</p>}
