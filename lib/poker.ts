@@ -27,6 +27,8 @@ export type PokerState = {
   mainPotWinners: number[]; mainPotShares: number[]; pots: Pot[]; revision: number;
   // Kept for all five hands; absent in older saved games with fixed seat styles.
   classIds?: ClassId[];
+  // Absent in older saved games, where personalities were always enabled.
+  personalitiesEnabled?: boolean;
 };
 // Persisted IDs stay stable so existing games retain their assignments.
 export type ClassId = 'disciplined' | 'pressure' | 'patient' | 'unpredictable';
@@ -39,14 +41,15 @@ export const STYLES: readonly Style[] = [
 ];
 export const STYLE = STYLES;
 export const PROVIDERS = ['GPT', 'Claude', 'Gemini', 'Grok'] as const;
-export function assignedStyle(state: Pick<PokerState, 'classIds'>, seat: number): Style {
+export function assignedStyle(state: Pick<PokerState, 'classIds' | 'personalitiesEnabled'>, seat: number): Style | null {
+  if (state.personalitiesEnabled === false) return null;
   return STYLES.find(style => style.id === state.classIds?.[seat]) ?? STYLES[seat];
 }
 export type Observation = {
   seat: number; name: string; hole: Card[]; board: Card[]; street: Street;
   button: number; smallBlind: number; bigBlind: number; pot: number; currentBet: number;
   players: PublicPlayer[]; legal: LegalActions; history: PokerEvent[];
-  style: Style; revision: number;
+  style: Style | null; revision: number;
 };
 export type SpectatorState = Omit<PokerState, 'seed' | 'deck' | 'actedAt' | 'pending'>;
 
@@ -184,7 +187,7 @@ function pay(state: PokerState, seat: number, amount: number): void {
   player.stack -= amount; player.bet += amount; player.contributed += amount;
   player.allIn = player.stack === 0; state.pot += amount;
 }
-export function createHand(seed: number | string, button: number, startingStack = 1000, classIds: readonly ClassId[] = STYLES.map(style => style.id)): PokerState {
+export function createHand(seed: number | string, button: number, startingStack = 1000, classIds: readonly ClassId[] = STYLES.map(style => style.id), personalitiesEnabled = true): PokerState {
   if (!Number.isSafeInteger(startingStack) || startingStack < 10) throw new Error('Starting stack must be an integer of at least 10');
   if (!Number.isInteger(button) || button < 0 || button > 3) throw new Error('Button must be a seat from 0 to 3');
   if (classIds.length !== 4 || new Set(classIds).size !== 4 || classIds.some(id => !STYLES.some(style => style.id === id))) throw new Error('A game must assign each playing class once');
@@ -192,7 +195,7 @@ export function createHand(seed: number | string, button: number, startingStack 
   const players: Player[] = PROVIDERS.map((name, seat) => ({ seat, name, stack: startingStack, hole: [], folded: false, allIn: false, bet: 0, contributed: 0, lastAction: '' }));
   for (let round = 0; round < 2; round++) for (const seat of seatOrder(button)) players[seat].hole.push(deck.pop()!);
   const state: PokerState = {
-    seed, deck, button, classIds: [...classIds], smallBlind: 5, bigBlind: 10, street: 'preflop', board: [], players,
+    seed, deck, button, personalitiesEnabled, classIds: personalitiesEnabled ? [...classIds] : undefined, smallBlind: 5, bigBlind: 10, street: 'preflop', board: [], players,
     actor: null, pot: 0, currentBet: 10, minRaise: 10, pending: [], actedAt: [-1, -1, -1, -1],
     history: [], winners: [], payouts: [0, 0, 0, 0], mainPotWinners: [], mainPotShares: [0, 0, 0, 0], pots: [], revision: 0,
   };
@@ -340,7 +343,7 @@ export function getObservation(state: PokerState, seat: number): Observation {
 }
 export function getSpectator(state: PokerState): SpectatorState {
   return clone({
-    button: state.button, classIds: state.players.map(player => assignedStyle(state, player.seat).id), smallBlind: state.smallBlind, bigBlind: state.bigBlind,
+    button: state.button, personalitiesEnabled: state.personalitiesEnabled !== false, classIds: state.personalitiesEnabled === false ? undefined : state.players.map(player => assignedStyle(state, player.seat)!.id), smallBlind: state.smallBlind, bigBlind: state.bigBlind,
     street: state.street, board: state.board, players: state.players, actor: state.actor,
     pot: state.pot, currentBet: state.currentBet, minRaise: state.minRaise,
     history: state.history, winners: state.winners, payouts: state.payouts,
@@ -350,6 +353,7 @@ export function getSpectator(state: PokerState): SpectatorState {
 }
 
 // Numeric style parameters are server-private, not part of spectator/agent DTOs.
+const NEUTRAL_POLICY = { loose: 0.00, aggression: 0.52, bluff: 0.07, sizing: 0.60 };
 const POLICIES: Record<ClassId, { loose: number; aggression: number; bluff: number; sizing: number }> = {
   disciplined: { loose: -0.02, aggression: 0.75, bluff: 0.05, sizing: 0.65 }, // Shark
   pressure: { loose: 0.11, aggression: 0.80, bluff: 0.22, sizing: 0.85 }, // Bully
@@ -387,7 +391,7 @@ function strength(observation: Observation): number {
  * only an Observation, so it cannot peek at opponents' cards or the runout. */
 export function decidePractice(observation: Observation, seed: number): Action {
   const random = randomStream(seed), roll = () => random() / 4294967296;
-  const legal = observation.legal, policy = POLICIES[observation.style.id];
+  const legal = observation.legal, policy = observation.style === null ? NEUTRAL_POLICY : POLICIES[observation.style.id];
   if (!policy) throw new Error('Unknown playing class');
   const own = observation.players[observation.seat];
   const live = observation.players.filter(player => !player.folded).length;
@@ -396,7 +400,7 @@ export function decidePractice(observation: Observation, seed: number): Action {
   const commitment = legal.callAmount / Math.max(1, own.stack);
   // The button acts last after the flop; heads-up also gives fewer opponents
   // to get through. Cheap, unraised pots offer steals; resistance removes them.
-  const steal = observation.style.id === 'patient'
+  const steal = observation.style?.id === 'patient'
     && (observation.seat === observation.button || live === 2)
     && observation.currentBet <= (observation.street === 'preflop' ? observation.bigBlind : 0);
   const bluff = roll() < (steal ? 0.32 : policy.bluff) / Math.max(1, live - 1);

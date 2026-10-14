@@ -8,12 +8,12 @@ import "./poker-table.css";
 export type TableSeat = {
   id: string; name: string; cards: string[]; stack: number; action: string;
   folded: boolean; active: boolean; dealer: boolean; winner: boolean; description: string;
-  classId?: string; className?: string; allIn?: boolean;
+  classId?: string | null; className?: string | null; allIn?: boolean;
 };
 
 export const MODEL_SEATS: TableSeat[] = ["GPT", "Claude", "Gemini", "Grok"].map(name => ({
   id: name.toLowerCase(), name, cards: [], stack: 1000, action: "Ready", folded: false,
-  active: false, dealer: false, winner: false, description: "A playing style is randomly assigned when a new game starts.",
+  active: false, dealer: false, winner: false, description: "Personalities can be enabled before starting a new challenge.",
 }));
 
 export function ModelMark({ name }: { name: string }) {
@@ -21,10 +21,10 @@ export function ModelMark({ name }: { name: string }) {
   return <span aria-hidden="true" className={`model-mark model-${lower.includes("gpt") ? "gpt" : lower.includes("claude") ? "claude" : lower.includes("gemini") ? "gemini" : "grok"}`}>{lower.includes("claude") ? "✳" : lower.includes("gemini") ? "✦" : lower.includes("gpt") ? "◎" : "╱"}</span>;
 }
 
-function PlayerClass({ name, description }: { name?: string; description: string }) {
+function PlayerClass({ name, description, started }: { name?: string | null; description: string; started: boolean }) {
   const tooltipId = useId();
   const [open, setOpen] = useState(false);
-  if (!name) return <span className="seat-class-unassigned">Class drawn at deal</span>;
+  if (!name) return <span className="seat-class-unassigned">{started ? "No personality" : "Personalities optional"}</span>;
   return <div className="seat-class-wrap" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
     <button className="seat-class" type="button" aria-describedby={tooltipId}
       onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} onClick={() => setOpen(true)}
@@ -54,7 +54,7 @@ export function PokerTable({ seats, board, pot, street, started, busy, settled, 
       return <article className={`player-seat seat-${i} ${seat.active && !settled ? "seat-active" : ""} ${seat.folded ? "seat-folded" : ""} ${seat.winner ? "seat-winner" : ""} ${seat.allIn ? "seat-all-in" : ""}`} key={seat.id} aria-label={`${seat.name}${state ? `, ${state.toLowerCase()}` : ""}`}>
         <div className="seat-identity"><ModelMark name={seat.name} /><div><h3>{seat.name}{seat.dealer ? <span className="dealer-button" title="Dealer" aria-label="Dealer">D</span> : null}</h3><span>{started ? `${seat.stack.toLocaleString()} chips` : "Decision model"}</span></div>{state ? <span className="seat-state">{state}</span> : null}</div>
         <div className="seat-hand"><PlayingCard card={seat.cards[0]} winning={seat.winner && winningCards.includes(seat.cards[0])} small /><PlayingCard card={seat.cards[1]} winning={seat.winner && winningCards.includes(seat.cards[1])} small /><span className="seat-action">{seat.winner ? "Paid out" : seat.folded ? "Out of this hand" : seat.active && busy ? "Deciding…" : seat.action}</span></div>
-        <PlayerClass name={started ? seat.className : undefined} description={seat.description} />
+        <PlayerClass name={started ? seat.className : undefined} description={seat.description} started={started} />
       </article>;
     })}</div>
   </section>;

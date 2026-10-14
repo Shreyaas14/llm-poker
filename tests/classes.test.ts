@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Observation, Style } from "../lib/poker.ts";
-import { createHand, decidePractice, estimateValues, getObservation, shuffledClasses, STYLES } from "../lib/poker.ts";
+import { createHand, decidePractice, estimateValues, getObservation, getSpectator, shuffledClasses, STYLES } from "../lib/poker.ts";
 
 test("game class assignments are seeded permutations with one of each class", () => {
   const expected = STYLES.map(style => style.id).sort();
@@ -12,7 +12,7 @@ test("game class assignments are seeded permutations with one of each class", ()
     assert.deepEqual(assignment, shuffledClasses(seed));
     assignments.add(assignment.join(","));
     const state = createHand(42, 0, 1000, assignment);
-    for (let seat = 0; seat < 4; seat++) assert.equal(getObservation(state, seat).style.id, assignment[seat]);
+    for (let seat = 0; seat < 4; seat++) assert.equal(getObservation(state, seat).style?.id, assignment[seat]);
     assignment.reverse();
     assert.notDeepEqual(state.classIds, assignment, "hand state owns its assignment snapshot");
   }
@@ -45,7 +45,7 @@ test("forecast rollouts honor assigned classes without consulting the real futur
   assert.notDeepEqual(reassignedForecast, originalForecast, "changing classes changes the future-action forecast");
   changed.deck.reverse(); changed.seed = "private-deck-changed";
   assert.deepEqual(estimateValues(changed, 82, 128), reassignedForecast);
-  const legacy = structuredClone(hand); delete legacy.classIds;
+  const legacy = structuredClone(hand); delete legacy.classIds; delete legacy.personalitiesEnabled;
   assert.deepEqual(estimateValues(legacy, 82, 128), originalForecast, "saved games retain their original class policies");
 });
 
@@ -105,7 +105,25 @@ test("Opportunist steals in position but retreats against resistance", () => {
 test("old saved assignments resolve to the four poker personalities", () => {
   const hand = createHand(42, 0, 1000, ["disciplined", "pressure", "patient", "unpredictable"]);
   const expected = ["Shark", "Bully", "Opportunist", "Maniac"];
-  assert.deepEqual(hand.players.map(player => getObservation(hand, player.seat).style.name), expected);
+  assert.deepEqual(hand.players.map(player => getObservation(hand, player.seat).style?.name), expected);
   delete hand.classIds;
-  assert.deepEqual(hand.players.map(player => getObservation(hand, player.seat).style.name), expected, "pre-assignment sessions keep their seat defaults");
+  delete hand.personalitiesEnabled;
+  assert.deepEqual(hand.players.map(player => getObservation(hand, player.seat).style?.name), expected, "pre-assignment sessions keep their seat defaults");
+});
+
+
+test("disabled personalities expose no assigned style and use one practice policy", () => {
+  const hand = createHand(42, 0, 1000, undefined, false);
+  for (let seat = 0; seat < 4; seat++) assert.equal(getObservation(hand, seat).style, null);
+  assert.equal(hand.classIds, undefined);
+  assert.equal(getSpectator(hand).classIds, undefined);
+  assert.equal(getSpectator(hand).personalitiesEnabled, false);
+  const observation = getObservation(hand, hand.actor!);
+  observation.players.forEach(player => { player.stack = 1000; player.bet = 0; });
+  for (let seed = 0; seed < 128; seed++) {
+    assert.deepEqual(decidePractice({ ...observation, seat: 0 }, seed), decidePractice({ ...observation, seat: 3 }, seed), "neutral policy is independent of provider and position");
+  }
+  const changed = structuredClone(hand);
+  changed.classIds = STYLES.map(style => style.id).reverse();
+  assert.deepEqual(estimateValues(changed, 82, 64), estimateValues(hand, 82, 64), "disabled forecasts ignore leftover assignments");
 });
