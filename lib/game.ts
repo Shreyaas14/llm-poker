@@ -1,7 +1,7 @@
 import { createHand, applyAction, getObservation, decidePractice, estimateValues, evaluateHand, assignedStyle, shuffledClasses } from "./poker.ts";
 import type { PokerState, Action } from "./poker.ts";
 import { createMarket, advanceMarket, placeHumanOrder, cancelHumanOrder, settleMarket, getMarketView } from "./market.ts";
-import type { MarketState } from "./market.ts";
+import type { HumanOrderInput, MarketState, OrderResult } from "./market.ts";
 import type { Activity, GameMode, HandResult, SessionCommand, SessionView, ShowdownOdds } from "../app/types.ts";
 import { DEFAULT_MODELS } from "./providers.ts";
 import { equityKey, showdownEquity } from "./equity.ts";
@@ -48,6 +48,17 @@ function randomNumber(): number { return crypto.getRandomValues(new Uint32Array(
 function log(game: Game, text: string, kind: Activity["kind"], now: number) {
   game.activity.push({ id: `${game.id}:${++game.sequence}`, hand: game.hand, text, kind, at: new Date(now).toISOString() });
   game.activity = game.activity.slice(-100);
+}
+function tradeReceipt(input: HumanOrderInput, result: OrderResult, name: string): string {
+  const buying = input.side === "buy";
+  const execution = result.filledQuantity
+    ? `${buying ? "Bought" : "Sold"} ${result.filledQuantity} of ${input.quantity} ${name} shares at ${((result.averagePrice ?? 0) * 100).toFixed(1)}¢ average.`
+    : `No fill: 0 of ${input.quantity} ${name} shares ${buying ? "bought" : "sold"}.`;
+  const payment = `${buying ? "Paid" : "Received"} ${result.total.toFixed(2)} credits.`;
+  const remainder = result.remainingQuantity === 0 ? "" : input.orderType === "limit"
+    ? ` ${result.remainingQuantity} shares remain open at ${Math.round(input.limitPrice * 100)}¢.`
+    : ` ${result.remainingQuantity} unfilled shares canceled.`;
+  return `${execution} ${payment}${remainder}`;
 }
 export function createGame(id: string, mode: GameMode, ranked: boolean, now = Date.now(), models: string[] = [...DEFAULT_MODELS], personalitiesEnabled = false): Game {
   const poker = createHand(randomSeed(), randomNumber() % 4, 1000, personalitiesEnabled ? shuffledClasses(randomSeed()) : undefined, personalitiesEnabled);
@@ -103,7 +114,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     catch (error) { throw new GameError(error instanceof Error ? error.message : "This order could not be placed."); }
     const {state, result} = order;
     game.market = state;
-    log(game, result.filledQuantity ? `${command.side === "buy" ? "Bought" : "Sold"} ${result.filledQuantity} ${game.poker.players[command.outcome].name} shares at ${((result.averagePrice ?? 0) * 100).toFixed(1)}¢.` : `Order ${result.status}: ${command.quantity} ${game.poker.players[command.outcome].name} shares.`, "trade", now);
+    log(game, tradeReceipt(command, result, game.poker.players[command.outcome].name), "trade", now);
     return game;
   }
   if (command.type === "cancel") {
