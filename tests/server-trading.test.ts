@@ -238,7 +238,7 @@ test('Jev polling batches once, preserves a concurrent human order, and records 
   } finally {held.release();await ticking.catch(()=>{});held.restore();}
 });
 
-test('poker may advance while Jev is deciding and stale market choices are discarded',async()=>{
+test('poker may advance while unexpired Jev choices still reach the same-hand market',async()=>{
   const {owner,game}=await startJev(),market=heldMarket(),poker=heldDecision();
   const ticking=server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
   await market.entered;
@@ -248,7 +248,12 @@ test('poker may advance while Jev is deciding and stale market choices are disca
     assert.equal(advanced.pokerRevision,game.pokerRevision+1);
     market.release();const result=await ticking;
     assert.equal(result.pokerRevision,advanced.pokerRevision);
-    assert.ok(result.market.books.every(b=>b.bestAsk==null&&b.bestBid==null));
+    assert.ok(result.market.books.some(b=>b.bestAsk!==null||b.bestBid!==null));
+    for(const player of result.players) if(player.folded) {
+      assert.equal(result.market.books[player.seat].bestAsk,null);
+      assert.equal(result.market.books[player.seat].bestBid,null);
+    }
+    assert.equal(result.market.driver,'jev');
   } finally {poker.release();market.release();await ticking.catch(()=>{});market.restore();}
 });
 

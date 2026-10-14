@@ -285,6 +285,20 @@ export function advanceMarket(previous: MarketState, values?: number[], ticks = 
   return state;
 }
 
+/** A bounded news response, not an extra second of simulated elapsed time. */
+export function reactMarket(previous: MarketState): MarketState {
+  const state = copy(previous);
+  if (state.status === "settled" || state.driver === "jev") return state;
+  // Faster participants tend to react first; seeded jitter avoids a fixed
+  // ordering. Everyone else retains their normal staggered wake schedule.
+  const arrivals = state.traders.filter(trader => trader.seenRevision < state.revision)
+    .map(trader => ({ trader, priority: trader.reaction + random(state) * 3 }))
+    .sort((a, b) => a.priority - b.priority).slice(0, 4);
+  for (const { trader } of arrivals) wakeTrader(state, trader);
+  if (arrivals.length) recordHistory(state);
+  return state;
+}
+
 export function placeHumanOrder(previous: MarketState, input: HumanOrderInput): { state: MarketState; result: OrderResult } {
   if (previous.status !== "open") throw new Error("This market has settled.");
   if (!Number.isInteger(input.outcome) || input.outcome < 0 || input.outcome >= OUTCOMES) throw new Error("Invalid outcome.");

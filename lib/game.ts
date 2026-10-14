@@ -2,7 +2,7 @@ import { createHand, applyAction, getObservation, decidePractice, estimateValues
 import type { MarketAgentRun } from "./market-agents.ts";
 import type { MarketDriver } from "./market.ts";
 import type { PokerState, Action } from "./poker.ts";
-import { JEV_MARKET_CALL_LIMIT, createMarket, advanceMarket, placeHumanOrder, cancelHumanOrder, settleMarket, getMarketView } from "./market.ts";
+import { JEV_MARKET_CALL_LIMIT, createMarket, advanceMarket, reactMarket, placeHumanOrder, cancelHumanOrder, settleMarket, getMarketView } from "./market.ts";
 import type { HumanOrderInput, MarketState, OrderResult } from "./market.ts";
 import type { Activity, GameMode, HandResult, SessionCommand, SessionView, ShowdownOdds } from "../app/types.ts";
 import { DEFAULT_MODELS } from "./providers.ts";
@@ -18,6 +18,9 @@ export type Game = {
   cashBefore: number; eventUntil: number; lastTickAt: number; values: number[];
   // Absent in running games, including sessions saved before playback controls.
   pausedAt?: number;
+  // Process an information-driven arrival batch after the changed table has
+  // been published, independently of the elapsed-time clock.
+  marketReactionPending?: boolean;
   requestIds: string[]; createdAt: number; notice: string | null; providerCalls: number;
   // Optional for saved sessions created before card equity was introduced.
   odds?: ShowdownOdds; oddsKey?: string;
@@ -86,6 +89,10 @@ export function catchUp(game: Game, now: number) {
   if (ticks) {
     game.market = advanceMarket(game.market, undefined, ticks);
     game.lastTickAt += ticks * 1000;
+  }
+  if (game.marketReactionPending) {
+    game.market = reactMarket(game.market);
+    delete game.marketReactionPending;
   }
 }
 export type LiveDecision = (observation: ReturnType<typeof getObservation>, model: string, feedback?: string) => Promise<Action>;
@@ -193,8 +200,14 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     game.values = estimateValues(game.poker, randomNumber(), 512);
     // Publish the changed poker state before any informed synthetic arrivals.
     game.market = advanceMarket(game.market, game.values, 0);
-    game.eventUntil = (game.pausedAt ?? now) + TRADING_WINDOW_MS;
-    game.lastTickAt = game.pausedAt ?? now;
+    // Jev markets receive only their provider-selected orders; a news event
+    // must never silently substitute the local decision models.
+    game.marketReactionPending = game.market.driver !== "jev";
+    const activeAt = game.pausedAt ?? now;
+    // Keep the fractional second accumulated before this action. Only exclude
+    // time beyond the previous market deadline, when arrivals were suspended.
+    game.lastTickAt += Math.max(0, activeAt - game.eventUntil);
+    game.eventUntil = activeAt + TRADING_WINDOW_MS;
   }
   return game;
 }

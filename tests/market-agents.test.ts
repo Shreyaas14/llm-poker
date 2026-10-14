@@ -64,10 +64,10 @@ test("late Jev decisions preserve concurrent human orders and recheck latest ava
   assert.equal(finishMarketRound(result,'token',round,answers,NOW+2000),null);
 });
 
-test("stale, paused, expired, and settled results never place orders; failures never fall back", async () => {
+test("other-hand, paused, expired, and settled results never place orders; failures never fall back", async () => {
   const game=reserveMarketRound(fixture(),'token',NOW)!;const round=prepareMarketRound(game);
   const answers=Object.fromEntries(round.traders.map(t=>[t.id,t.id==='trader-0'?'tight_quotes':'hold']));
-  for(const changed of [(()=>{const c=structuredClone(game);c.poker.revision++;return c;})(),{...game,hand:2},{...game,pausedAt:NOW}]) {
+  for(const changed of [{...game,hand:2},{...game,pausedAt:NOW}]) {
     assert.equal(finishMarketRound(changed,'token',round,answers,NOW+1000)!.market.orders.length,0);
   }
   assert.equal(finishMarketRound(game,'token',round,answers,NOW+11000)!.market.orders.length,0);
@@ -76,6 +76,46 @@ test("stale, paused, expired, and settled results never place orders; failures n
   const paused=await commandGame(game,{type:'playback',paused:true},NOW+500);
   const resumed=await commandGame(paused,{type:'playback',paused:false},NOW+600);
   assert.equal(finishMarketRound(resumed,'token',round,answers,NOW+1000),null);
+});
+
+test("unexpired Jev choices survive same-hand poker actions without changing their limit", async () => {
+  let game=fixture();game.market.values=[.1,.7,.1,.1];
+  game=reserveMarketRound(game,'during-action',NOW)!;
+  const round=prepareMarketRound(game), selected=round.traders.find(t=>t.id==='trader-2')!.choices.buy_1_5[0];
+  const answers=Object.fromEntries(round.traders.map(t=>[t.id,t.id==='trader-2'?'buy_1_5':'hold']));
+  game=await commandGame(game,{type:'advance',pokerRevision:game.poker.revision},NOW+250,
+    async observation=>({type:observation.legal.canCheck?'check':'call'}));
+  assert.notEqual(game.poker.revision,game.marketAgents!.pending!.pokerRevision);
+  const result=finishMarketRound(game,'during-action',round,answers,NOW+1000)!;
+  const quote=result.market.orders.find(o=>o.owner==='trader-2');
+  assert.ok(quote,'a new poker revision cannot discard every in-flight batch');
+  assert.equal(quote.priceTicks,selected.priceTicks);
+  assert.equal(result.market.driver,'jev');assertFunded(result.market);
+});
+
+test("same-hand delayed choices skip newly folded outcomes and respect current funding", async () => {
+  let game=reserveMarketRound(fixture(),'fold-race',NOW)!;
+  const foldingSeat=game.poker.actor!, round=prepareMarketRound(game);
+  const answers=Object.fromEntries(round.traders.map(t=>[t.id,t.id==='trader-2'?`buy_${foldingSeat}_5`:'hold']));
+  game=await commandGame(game,{type:'advance',pokerRevision:game.poker.revision},NOW+250,async()=>({type:'fold'}));
+  const folded=finishMarketRound(game,'fold-race',round,answers,NOW+1000)!;
+  assert.equal(folded.market.values[foldingSeat],0);
+  assert.equal(folded.market.orders.length,0);assert.equal(folded.market.fills.length,0);
+  assertFunded(folded.market);
+
+  let funded=reserveMarketRound(fixture(),'funding-race',NOW)!;
+  const fundedRound=prepareMarketRound(funded);
+  const fundedAnswers=Object.fromEntries(fundedRound.traders.map(t=>[t.id,t.id==='trader-2'?'buy_1_5':'hold']));
+  funded=await commandGame(funded,{type:'advance',pokerRevision:funded.poker.revision},NOW+250,
+    async observation=>({type:observation.legal.canCheck?'check':'call'}));
+  const buyer=funded.market.accounts['trader-2'];
+  funded.market.accounts['trader-3'].cashUnits+=buyer.cashUnits;buyer.cashUnits=0;
+  const before=structuredClone(buyer.shares);
+  const empty=finishMarketRound(funded,'funding-race',fundedRound,fundedAnswers,NOW+1000)!;
+  assert.equal(empty.market.accounts['trader-2'].cashUnits,0);
+  assert.deepEqual(empty.market.accounts['trader-2'].shares,before);
+  assert.equal(empty.market.orders.length,0);assert.equal(empty.market.fills.length,0);
+  assertFunded(empty.market);
 });
 
 test("Gateway adapter batches typed choices and rejects malformed, missing, or unknown answers", async () => {
