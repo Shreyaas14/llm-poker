@@ -6,8 +6,8 @@ export const metadata: Metadata = {
   description: "A play-money prediction market on four AI poker players. Trade across five hands.",
   metadataBase: new URL("https://river-market-poker.suseendransuresh.chatgpt.site"),
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: { url: "/vesper-logo.png", type: "image/png" },
+    shortcut: "/vesper-logo.png",
   },
 };
 
