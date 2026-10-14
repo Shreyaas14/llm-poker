@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { SessionView, ShowdownOdds } from "../../app/types";
 import type { MarketBookView } from "../../lib/market";
 import "./market-analytics.css";
@@ -28,7 +28,9 @@ export function equityDescription(odds: ShowdownOdds | undefined): string {
 /** History is recorded from the book midpoint, or the last trade when a side is empty. */
 export function MarketAnalytics({ session }: { session: SessionView | null }) {
   const containerRef = useRef<HTMLElement>(null);
+  const tooltipId = useId();
   const [chartWidth, setChartWidth] = useState(620);
+  const [hoveredTick, setHoveredTick] = useState<number | null>(null);
   const hasSession = session !== null;
 
   useEffect(() => {
@@ -66,9 +68,25 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
     }).join(" ");
   });
 
+  const inspected = hoveredTick == null ? undefined : history.find(point => point.tick === hoveredTick);
+  const inspectAt = (clientX: number, bounds: DOMRect) => {
+    const chartX = (clientX - bounds.left) * chartWidth / bounds.width;
+    const tick = firstTick + Math.max(0, Math.min(1, (chartX - LEFT) / Math.max(1, right - LEFT))) * span;
+    const nearest = history.reduce<(typeof history)[number] | undefined>((best, point) => !best || Math.abs(point.tick - tick) < Math.abs(best.tick - tick) ? point : best, undefined);
+    setHoveredTick(nearest?.tick ?? null);
+  };
+
   return <section ref={containerRef} className="market-analytics" aria-label="Market prices and mathematical showdown equity">
     <div className="analytics-heading"><h2>Market prices</h2><span>Hand {session.hand}</span></div>
-    <svg className="market-price-chart" viewBox={`0 0 ${chartWidth} ${HEIGHT}`} height={HEIGHT} preserveAspectRatio="none" role="img" aria-label={`Market price history for hand ${session.hand}. Current prices and mathematical equity are listed below.`}>
+    <div className="market-chart-wrap">
+    <svg aria-describedby={inspected ? tooltipId : undefined} tabIndex={0} onPointerMove={event => inspectAt(event.clientX, event.currentTarget.getBoundingClientRect())} onPointerLeave={() => setHoveredTick(null)} onFocus={() => setHoveredTick(history.at(-1)?.tick ?? null)} onBlur={() => setHoveredTick(null)} onKeyDown={event => {
+      if (event.key === "Escape") { setHoveredTick(null); return; }
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || !history.length) return;
+      event.preventDefault();
+      const index = history.findIndex(point => point.tick === hoveredTick);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? history.length - 1 : Math.max(0, Math.min(history.length - 1, (index < 0 ? history.length - 1 : index) + (event.key === "ArrowLeft" ? -1 : 1)));
+      setHoveredTick(history[next].tick);
+    }} className="market-price-chart" viewBox={`0 0 ${chartWidth} ${HEIGHT}`} height={HEIGHT} preserveAspectRatio="none" role="img" aria-label={`Market price history for hand ${session.hand}. Hover to see named prices at each time, or focus and use the arrow keys. Current prices and mathematical equity are listed below.`}>
       <title>Outcome prices from the order book</title>
       <desc>Four lines show actual market history. Gaps indicate there was no midpoint or previous trade. Prices can differ from mathematical showdown equity.</desc>
       {[0, .25, .5, .75, 1].map(value => <g key={value}><line className="chart-grid-line" x1={LEFT} x2={right} y1={y(value)} y2={y(value)} /><text className="chart-axis-label" x={right + 8} y={y(value) + 3}>{value * 100}%</text></g>)}
@@ -77,10 +95,19 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
         const value = latest?.prices[player.seat];
         return <g key={player.seat}><path d={paths[i]} stroke={LINE_COLORS[player.seat % LINE_COLORS.length]} fill="none" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />{value != null && latest ? <circle cx={x(latest.tick)} cy={y(value)} r="3" fill={LINE_COLORS[player.seat % LINE_COLORS.length]} stroke="#ffffff" strokeWidth="1" /> : null}</g>;
       })}
+      {inspected ? <g className="chart-inspection" aria-hidden="true"><line x1={x(inspected.tick)} x2={x(inspected.tick)} y1={TOP} y2={BOTTOM} />{session.players.map(player => {
+        const value = inspected.prices[player.seat];
+        return value == null ? null : <circle key={player.seat} cx={x(inspected.tick)} cy={y(value)} r="4" fill={LINE_COLORS[player.seat % LINE_COLORS.length]} stroke="#fff" strokeWidth="1.5" />;
+      })}</g> : null}
       <text className="chart-axis-label" x={LEFT} y={HEIGHT - 5}>{firstTick}s</text>
       {lastTick > firstTick ? <text className="chart-axis-label" x={right} y={HEIGHT - 5} textAnchor="end">{lastTick}s</text> : null}
       <text className="chart-axis-label" x={(LEFT + right) / 2} y={HEIGHT - 5} textAnchor="middle">Market time</text>
     </svg>
+    {inspected ? <div className="chart-price-tooltip" id={tooltipId} role="tooltip" style={{ left: Math.max(0, Math.min(chartWidth - 190, x(inspected.tick) + 12)) }}>
+      <strong>Market prices · {inspected.tick}s</strong>
+      {session.players.map(player => <div key={player.seat}><span><i aria-hidden="true" style={{ background: LINE_COLORS[player.seat % LINE_COLORS.length] }} />{player.name}</span><b>{percent(inspected.prices[player.seat])}</b></div>)}
+    </div> : null}
+    </div>
     <div className="analytics-comparison" role="table" aria-label="Current market prices compared with mathematical showdown equity">
       <div className="analytics-table-row analytics-table-head" role="row"><span role="columnheader">Model</span><span role="columnheader">{session.market.status === "settled" ? "Payout" : "Market"}</span><span role="columnheader">Showdown equity</span></div>
       {session.players.map(player => {
