@@ -7,12 +7,12 @@ import "./poker-table.css";
 export type TableSeat = {
   id: string; name: string; cards: string[]; stack: number; action: string;
   folded: boolean; active: boolean; dealer: boolean; winner: boolean; description: string;
-  classId?: string; className?: string; allIn?: boolean;
+  classId?: string | null; className?: string | null; allIn?: boolean;
 };
 
 export const MODEL_SEATS: TableSeat[] = ["GPT", "Claude", "Gemini", "Grok"].map(name => ({
   id: name.toLowerCase(), name, cards: [], stack: 1000, action: "Ready", folded: false,
-  active: false, dealer: false, winner: false, description: "A playing style is randomly assigned when a new game starts.",
+  active: false, dealer: false, winner: false, description: "Personalities can be enabled before starting a new challenge.",
 }));
 
 export function ModelMark({ name }: { name: string }) {
@@ -20,7 +20,7 @@ export function ModelMark({ name }: { name: string }) {
   return <span aria-hidden="true" className={`model-mark model-${lower.includes("gpt") ? "gpt" : lower.includes("claude") ? "claude" : lower.includes("gemini") ? "gemini" : "grok"}`}>{lower.includes("claude") ? "✳" : lower.includes("gemini") ? "✦" : lower.includes("gpt") ? "◎" : "╱"}</span>;
 }
 
-function PlayerClass({ name, description }: { name?: string; description: string }) {
+function PlayerClass({ name, description }: { name?: string | null; description: string }) {
   const tooltipId = useId();
   const [open, setOpen] = useState(false);
   if (!name) return null;

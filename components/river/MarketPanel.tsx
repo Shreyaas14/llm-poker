@@ -11,7 +11,7 @@ export function price(value: number | null | undefined) { return value == null ?
 export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onStart }: {
   session: SessionView | null; bootstrap: Bootstrap | null; busy: boolean; playing: boolean;
   onCommand: (command: SessionCommand) => Promise<void>;
-  onStart: (mode: GameMode, ranked: boolean) => Promise<void>;
+  onStart: (mode: GameMode, ranked: boolean, personalitiesEnabled: boolean) => Promise<boolean>;
 }) {
   const [selected, setSelected] = useState(0);
   const [side, setSide] = useState<"buy" | "sell">("buy");
@@ -20,6 +20,7 @@ export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onSt
   const [limit, setLimit] = useState("25");
   const [mode, setMode] = useState<GameMode>("practice");
   const [ranked, setRanked] = useState(false);
+  const [personalitiesEnabled, setPersonalitiesEnabled] = useState(false);
   const [ticketError, setTicketError] = useState<string | null>(null);
   const names = session?.players ?? [];
   const book = session?.market.books.find(b => b.outcome === selected);
@@ -68,8 +69,10 @@ export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onSt
       {!session ? <div className="intro-ticket"><p>5 hands · 1,000 credits</p>
         <div className="mode-choices"><button type="button" className={`mode-choice ${mode === "practice" ? "active" : ""}`} aria-pressed={mode === "practice"} onClick={() => setMode("practice")}><strong>Practice</strong><small>Instant decisions</small></button><button type="button" className={`mode-choice ${mode === "live" ? "active" : ""}`} aria-pressed={mode === "live"} onClick={() => setMode("live")}><strong>Live models</strong><small>Four AI providers</small></button></div>
         {mode === "live" && !bootstrap?.liveAvailable ? <div className="live-unavailable">{bootstrap?.liveUnavailableReason ?? "Live providers are not connected yet. Practice is ready to play."}</div> : null}
+        <label className="ranked-choice"><input type="checkbox" checked={personalitiesEnabled} disabled={busy} onChange={e => setPersonalitiesEnabled(e.target.checked)} /> Enable personalities</label>
+        <p className="ticket-note">{personalitiesEnabled ? "Shark, Bully, Maniac, and Opportunist are assigned for all five hands." : "No assigned playing styles. Models play without personality instructions."}</p>
         {bootstrap?.authenticated && bootstrap.profile ? <label className="ranked-choice"><input type="checkbox" checked={ranked} onChange={e => setRanked(e.target.checked)} /> Enter weekly leaderboard <span>{bootstrap.profile.remainingAttempts} attempts left</span></label> : null}
-        {mode === "live" && bootstrap?.liveAvailable && !bootstrap.authenticated ? <a className="primary-button wide" href="/signin-with-chatgpt?return_to=/" target="_top">Sign in for live models</a> : <button type="button" className="primary-button wide" disabled={busy || !bootstrap || mode === "live" && !bootstrap.liveAvailable || ranked && !bootstrap.profile?.remainingAttempts} onClick={() => void onStart(mode, ranked)}>{busy ? "Starting…" : mode === "live" ? "Start live challenge" : "Start practice challenge"}</button>}
+        {mode === "live" && bootstrap?.liveAvailable && !bootstrap.authenticated ? <a className="primary-button wide" href="/signin-with-chatgpt?return_to=/" target="_top">Sign in for live models</a> : <button type="button" className="primary-button wide" disabled={busy || !bootstrap || mode === "live" && !bootstrap.liveAvailable || ranked && !bootstrap.profile?.remainingAttempts} onClick={async () => { if (await onStart(mode, ranked, personalitiesEnabled)) setPersonalitiesEnabled(false); }}>{busy ? "Starting…" : mode === "live" ? "Start live challenge" : "Start practice challenge"}</button>}
         {!bootstrap?.authenticated ? <p className="login-hint"><a href="/signin-with-chatgpt?return_to=/" target="_top">Sign in</a> to enter the leaderboard.</p> : !bootstrap.profile ? <p className="login-hint">Choose a username in your profile to enter ranked challenges.</p> : <p className="login-hint">{ranked ? "Ranked attempts count when a challenge starts." : "Unranked. No weekly attempt used."}</p>}
 
       </div> : ended ? <div className="trade-ticket settlement-ticket"><span className="eyebrow">Hand {session.hand} settled</span><h3>{session.results.at(-1)?.description ?? "This hand is complete."}</h3><div className="trade-details"><div><span>This hand’s PnL</span><strong className={(session.results.at(-1)?.pnl ?? 0) < 0 ? "negative" : "positive"}>{signed(session.results.at(-1)?.pnl ?? 0)} credits</strong></div><div><span>Your balance</span><strong>{credits(session.market.cash)} credits</strong></div></div>{session.status === "hand_complete" ? <p className="ticket-note">{paused ? "Press Play to deal the next hand." : "The next hand deals automatically."}</p> : <p className="ticket-note">Five hands complete.</p>}</div> : <div className="trade-ticket">

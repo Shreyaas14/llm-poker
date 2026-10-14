@@ -60,8 +60,8 @@ function tradeReceipt(input: HumanOrderInput, result: OrderResult, name: string)
     : ` ${result.remainingQuantity} unfilled shares canceled.`;
   return `${execution} ${payment}${remainder}`;
 }
-export function createGame(id: string, mode: GameMode, ranked: boolean, now = Date.now(), models: string[] = [...DEFAULT_MODELS]): Game {
-  const poker = createHand(randomSeed(), randomNumber() % 4, 1000, shuffledClasses(randomSeed()));
+export function createGame(id: string, mode: GameMode, ranked: boolean, now = Date.now(), models: string[] = [...DEFAULT_MODELS], personalitiesEnabled = false): Game {
+  const poker = createHand(randomSeed(), randomNumber() % 4, 1000, personalitiesEnabled ? shuffledClasses(randomSeed()) : undefined, personalitiesEnabled);
   const values = estimateValues(poker, randomNumber(), 512);
   const game: Game = {
     rulesVersion: RULES_VERSION, id, mode, ranked, rankEligible: true, hand: 1,
@@ -129,7 +129,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     if (isPlaying(game) || game.hand >= 5) throw new GameError("This hand is not ready to advance.");
     game.cashBefore = getMarketView(game.market).cash;
     game.hand += 1;
-    game.poker = createHand(randomSeed(), (game.poker.button + 1) % 4, 1000, game.poker.players.map(player => assignedStyle(game.poker, player.seat).id));
+    game.poker = createHand(randomSeed(), (game.poker.button + 1) % 4, 1000, game.poker.personalitiesEnabled === false ? undefined : game.poker.players.map(player => assignedStyle(game.poker, player.seat)!.id), game.poker.personalitiesEnabled !== false);
     // Make the client guard unique across hands, including otherwise-identical preflop revisions.
     game.poker.revision += game.hand * 10000;
     ensureOdds(game);
@@ -188,12 +188,12 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
     id: game.id, version: game.version, pokerRevision: game.poker.revision, mode: game.mode,
     status: ended ? game.hand === 5 ? "complete" : "hand_complete" : "playing",
     busy, paused, hand: game.hand, totalHands: 5, startingBalance: 1000,
-    ranked: game.ranked, rankEligible: game.rankEligible, notice: game.notice,
+    personalitiesEnabled: game.poker.personalitiesEnabled !== false, ranked: game.ranked, rankEligible: game.rankEligible, notice: game.notice,
     street: game.poker.street, board: [...game.poker.board], actor: game.poker.actor,
     button: game.poker.button, pot: game.poker.pot,
     players: game.poker.players.map(p => {
       const style = assignedStyle(game.poker, p.seat);
-      return { seat: p.seat, name: p.name, modelId: game.mode === "live" ? game.models[p.seat] : "Practice decision model", classId: style.id, className: style.name, description: style.description, stack: p.stack, cards: [...p.hole], bet: p.bet, contributed: p.contributed, folded: p.folded, allIn: p.allIn, lastAction: p.lastAction };
+      return { seat: p.seat, name: p.name, modelId: game.mode === "live" ? game.models[p.seat] : "Practice decision model", classId: style?.id ?? null, className: style?.name ?? null, description: style?.description ?? "No assigned personality.", stack: p.stack, cards: [...p.hole], bet: p.bet, contributed: p.contributed, folded: p.folded, allIn: p.allIn, lastAction: p.lastAction };
     }),
     winners: [...game.poker.mainPotWinners], winningCards: ended && game.poker.board.length === 5 ? [...new Set(game.poker.mainPotWinners.flatMap(seat => evaluateHand([...game.poker.players[seat].hole, ...game.poker.board]).cards))] : [],
     market, odds: { ...odds, equities: [...odds.equities] }, results: game.results, activity: game.activity,

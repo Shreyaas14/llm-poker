@@ -17,7 +17,7 @@ export type Bootstrap = {
   activeSessionId: string | null;
 };
 export type PlayerView = {
-  seat: number; name: string; modelId: string; classId: string; className: string; description: string;
+  seat: number; name: string; modelId: string; classId: string | null; className: string | null; description: string;
   stack: number; cards: string[]; bet: number; contributed: number;
   folded: boolean; allIn: boolean; lastAction: string;
 };
@@ -28,7 +28,7 @@ export type SessionView = {
   id: string; version: number; pokerRevision: number; mode: GameMode;
   status: "playing" | "hand_complete" | "complete";
   busy: boolean; paused: boolean; hand: number; totalHands: 5; startingBalance: 1000;
-  ranked: boolean; rankEligible: boolean; notice: string | null;
+  personalitiesEnabled: boolean; ranked: boolean; rankEligible: boolean; notice: string | null;
   street: "preflop" | "flop" | "turn" | "river" | "complete";
   board: string[]; players: PlayerView[]; actor: number | null;
   button: number; pot: number; winners: number[]; winningCards: string[];

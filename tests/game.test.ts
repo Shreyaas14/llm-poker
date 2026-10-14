@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { commandGame, createGame, catchUp, GameError, TRADING_WINDOW_MS, viewGame } from "../lib/game.ts";
 import type { Game, LiveDecision } from "../lib/game.ts";
-import { createHand, estimateValues, fullDeck, STYLES } from "../lib/poker.ts";
+import { createHand, estimateValues, fullDeck, getObservation, STYLES } from "../lib/poker.ts";
 import type { Observation } from "../lib/poker.ts";
 import { createMarket, getMarketView, UNITS_PER_CREDIT } from "../lib/market.ts";
 
@@ -47,7 +47,7 @@ function assertPrivateObservation(observation: Observation, game: Game): void {
 }
 
 test("new game starts with four real seats, five-hand target, and a private future deck", () => {
-  const game = createGame("created-game", "practice", false, NOW);
+  const game = createGame("created-game", "practice", false, NOW, undefined, true);
   const view = viewGame(game, false, NOW);
   assert.equal(view.totalHands, 5); assert.equal(view.hand, 1);
   assert.equal(view.market.cash, 1000); assert.equal(view.startingBalance, 1000);
@@ -174,7 +174,7 @@ test("five complete hands settle trades, carry cash, rotate dealer, and end the 
   const seenModels = new Set<string>();
   const chooser: LiveDecision = async (observation, model) => {
     assertPrivateObservation(observation, game);
-    assert.equal(observation.style.id, classIds[observation.seat]);
+    assert.equal(observation.style?.id, classIds[observation.seat]);
     assert.equal(model, game.models[observation.seat]); seenModels.add(model);
     return foldIfPossible(observation, model);
   };
@@ -243,11 +243,13 @@ test("five complete hands settle trades, carry cash, rotate dealer, and end the 
 test("legacy saved games keep their original classes through views and the next hand", async () => {
   let game = gameFixture();
   delete game.poker.classIds;
+  delete game.poker.personalitiesEnabled;
+  assert.equal(viewGame(game, false, NOW).personalitiesEnabled, true);
   const originalIds = STYLES.map(style => style.id);
   assert.deepEqual(viewGame(game, false, NOW).players.map(player => player.classId), originalIds);
   while (game.poker.street !== "complete") {
     game = await commandGame(game, { type: "advance", pokerRevision: game.poker.revision }, NOW, async (observation, model) => {
-      assert.equal(observation.style.id, originalIds[observation.seat]);
+      assert.equal(observation.style?.id, originalIds[observation.seat]);
       return foldIfPossible(observation, model);
     });
   }
@@ -432,4 +434,36 @@ test("a tied river settles fractional main-pot shares and cannot reopen the mark
     outcome: 0, side: "buy", quantity: 1, limitPrice: 0.5, orderType: "ioc" }, NOW), /window is closed/);
   const afterTick = await commandGame(settled, { type: "tick" }, NOW + 60000);
   assert.deepEqual(afterTick.market, settled.market);
+});
+
+
+test("new games require an explicit personality opt-in", () => {
+  const neutral = createGame("neutral-game", "practice", false, NOW);
+  const view = viewGame(neutral, false, NOW);
+  assert.equal(view.personalitiesEnabled, false);
+  assert.equal(neutral.poker.classIds, undefined);
+  assert.ok(view.players.every(player => player.classId === null && player.className === null));
+  assert.equal(getObservation(neutral.poker, neutral.poker.actor!).style, null);
+  const enabled = createGame("personality-game", "practice", false, NOW, undefined, true);
+  assert.equal(viewGame(enabled, false, NOW).personalitiesEnabled, true);
+  assert.deepEqual([...enabled.poker.classIds!].sort(), STYLES.map(style => style.id).sort());
+});
+
+test("personality choice survives reload and all five hands", async () => {
+  for (const enabled of [false, true]) {
+    let game = createGame(`choice-${enabled}`, "live", false, NOW, undefined, enabled);
+    const ids = game.poker.classIds;
+    for (let hand = 1; hand <= 5; hand++) {
+      game = JSON.parse(JSON.stringify(game)) as Game;
+      assert.equal(viewGame(game, false, NOW).personalitiesEnabled, enabled);
+      assert.deepEqual(game.poker.classIds, ids);
+      while (game.poker.street !== "complete") {
+        game = await commandGame(game, { type: "advance", pokerRevision: game.poker.revision }, NOW, async observation => {
+          assert.equal(observation.style !== null, enabled);
+          return foldIfPossible(observation, "test");
+        });
+      }
+      if (hand < 5) game = await commandGame(game, { type: "next_hand", pokerRevision: game.poker.revision }, NOW);
+    }
+  }
 });

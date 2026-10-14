@@ -85,7 +85,7 @@ export async function getSession(who: Identity, id?: string) {
   return row ? rowView(row) : null;
 }
 export async function startSession(who: Identity, body: unknown) {
-  const {mode,ranked,requestId} = z.object({mode:z.enum(["practice","live"]),ranked:z.boolean().default(false),requestId:uuid}).parse(body);
+  const {mode,ranked,personalitiesEnabled,requestId} = z.object({mode:z.enum(["practice","live"]),ranked:z.boolean().default(false),personalitiesEnabled:z.boolean().default(false),requestId:uuid}).parse(body);
   const previous = await db().prepare("SELECT * FROM sessions WHERE id=? AND user_id=?").bind(requestId,who.id).first<SessionRow>();
   if (previous) return rowView(previous);
   const active = await activeRow(who.id); if (active) return rowView(active);
@@ -102,7 +102,7 @@ export async function startSession(who: Identity, body: unknown) {
     if ((count?.n??0)>=6) throw new GameError("Today's six live runs are used. Practice is still available.",429,"daily_limit");
   }
   const now=Date.now(), week=weekWindow(now).week;
-  const game=createGame(requestId,mode,ranked,now,modelIds());
+  const game=createGame(requestId,mode,ranked,now,modelIds(),personalitiesEnabled);
   const result=await db().prepare(`INSERT INTO sessions(id,user_id,week,mode,ranked,status,version,state,created_at,updated_at,lock_until)
     SELECT ?,?,?,?,?, 'playing',0,?,?,?,0
     WHERE NOT EXISTS(SELECT 1 FROM sessions WHERE user_id=? AND status IN ('playing','hand_complete'))

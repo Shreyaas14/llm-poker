@@ -26,8 +26,8 @@ test("all four providers receive only the seat observation, strict JSON instruct
     return responseWith('{"action":"call","raiseTo":null}');
   });
   for (const model of DEFAULT_MODELS) assert.deepEqual(await requestDecision(observation, model, key), { type: "call" });
-  assert.equal(observation.style.id, hand.classIds![observation.seat]);
-  assert.notEqual(observation.style.id, STYLES[observation.seat].id, "the request carries the assigned class, not the old provider default");
+  assert.equal(observation.style?.id, hand.classIds![observation.seat]);
+  assert.notEqual(observation.style?.id, STYLES[observation.seat].id, "the request carries the assigned class, not the old provider default");
   assert.equal(captured.length, 4);
   for (let i = 0; i < captured.length; i++) {
     const { url, init, body } = captured[i];
@@ -104,4 +104,19 @@ test("network failures and malformed HTTP JSON reject rather than inventing an a
   await assert.rejects(requestDecision(observation, DEFAULT_MODELS[2], key), ProviderError);
   failWithNetwork = false;
   await assert.rejects(requestDecision(observation, DEFAULT_MODELS[3], key), SyntaxError);
+});
+
+
+test("live games without personalities receive no style assignment or instruction", async t => {
+  const hand = createHand(42, 0, 1000, undefined, false);
+  const observation = getObservation(hand, hand.actor!);
+  let messages: { role: string; content: string }[] = [];
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    messages = JSON.parse(String(init.body)).messages;
+    return responseWith('{"action":"call","raiseTo":null}');
+  });
+  await requestDecision(observation, DEFAULT_MODELS[0], key);
+  assert.equal(JSON.parse(messages[1].content).style, null);
+  assert.doesNotMatch(messages[0].content, /assigned playing style/);
+  assert.match(messages[0].content, /Maximize your poker chips/);
 });

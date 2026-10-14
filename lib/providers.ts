@@ -33,7 +33,7 @@ export async function requestDecision(
       model,
       max_tokens: 1000,
       messages: [
-        { role: "system", content: "You are one seat in a four-player no-limit Texas Hold'em game. Maximize your poker chips while following your assigned playing style. You know ONLY the observation supplied. Opponent hole cards and future cards are unknown. No tools or game-state changes are available. Choose exactly one legal action. A raiseTo value is the TOTAL street contribution, not a raise increment. Use null for raiseTo unless raising. Never infer that you know hidden cards. Return only the required JSON decision." },
+        { role: "system", content: "You are one seat in a four-player no-limit Texas Hold'em game. Maximize your poker chips" + (observation.style ? " while following your assigned playing style." : ".") + " You know ONLY the observation supplied. Opponent hole cards and future cards are unknown. No tools or game-state changes are available. Choose exactly one legal action. A raiseTo value is the TOTAL street contribution, not a raise increment. Use null for raiseTo unless raising. Never infer that you know hidden cards. Return only the required JSON decision." },
         { role: "user", content: JSON.stringify(observation) },
         ...(feedback ? [{ role: "user", content: `Your previous decision was rejected by the rules engine: ${feedback}. The observation has not changed. Choose a legal action.` }] : []),
       ],
