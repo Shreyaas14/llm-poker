@@ -1,7 +1,7 @@
 "use client";
 
 import type { SessionView } from "../../app/types";
-import { credits, price, signed } from "./MarketPanel";
+import { dollars, price, signed } from "./MarketPanel";
 import "./positions-strip.css";
 
 export function PositionsStrip({ session, readOnly = false }: { session: SessionView; readOnly?: boolean }) {
@@ -30,11 +30,11 @@ export function PositionsStrip({ session, readOnly = false }: { session: Session
           </div>
           <div className="positions-strip-details">
             <div className="positions-strip-detail"><span>Avg</span><span>{quantity > 0 ? price(position?.averageCost) : "—"}</span></div>
-            <div className="positions-strip-detail" title={quantity > 0 ? `${credits(position?.liquidationValue ?? 0)} credits at available bids. Unrealized PnL is this value minus the cost of your shares.` : undefined}>
+            <div className="positions-strip-detail" title={quantity > 0 ? `${dollars(position?.liquidationValue ?? 0)} at available bids. Unrealized PnL is this value minus the cost of your shares.` : undefined}>
               <span>PnL</span><span className={quantity > 0 ? pnl < 0 ? "negative" : "positive" : undefined}>{quantity > 0 ? signed(pnl) : "—"}</span>
             </div>
           </div>
-          {notes ? <p className="positions-strip-note">{notes}</p> : null}
+          <p className="positions-strip-note" title={notes || undefined}>{notes || "\u00a0"}</p>
         </div>;
       })}
     </div>

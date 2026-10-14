@@ -75,7 +75,7 @@ test("no naked sells, double reservation, fractional shares, or off-tick prices"
   const state = fixture();
   assert.throws(() => placeHumanOrder(state, { outcome: 0, side: "sell", quantity: 1, limitPrice: 0.25, orderType: "limit" }), /shares/);
   const reserved = placeHumanOrder(state, { outcome: 0, side: "buy", quantity: 2000, limitPrice: 0.5, orderType: "limit" }).state;
-  assert.throws(() => placeHumanOrder(reserved, { outcome: 1, side: "buy", quantity: 1, limitPrice: 0.01, orderType: "limit" }), /credits/);
+  assert.throws(() => placeHumanOrder(reserved, { outcome: 1, side: "buy", quantity: 1, limitPrice: 0.01, orderType: "limit" }), /available cash/);
   assert.throws(() => placeHumanOrder(state, { outcome: 0, side: "buy", quantity: 1.5, limitPrice: 0.25, orderType: "limit" }), /whole/);
   assert.throws(() => placeHumanOrder(state, { outcome: 0, side: "buy", quantity: 1, limitPrice: 0.255, orderType: "limit" }), /increments/);
   assertLedger(reserved);

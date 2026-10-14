@@ -1,6 +1,6 @@
 # Configure this as a server secret in Sites for live models.
 AI_GATEWAY_API_KEY=
-# Enable after all four real provider requests pass.
+# Enable after the four poker providers and Jev trader requests pass.
 LIVE_MODELS_READY=false
 # Optional overrides; use exact IDs from https://ai-gateway.vercel.sh/v1/models.
 # POKER_MODEL_GPT=

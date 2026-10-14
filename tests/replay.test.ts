@@ -24,7 +24,8 @@ test("replay freezes the public view without future cards or modifying the game"
 test("record actions and human resting-order fills, without idle market tick frames", async () => {
   const game = createGame("replay-ticks", "practice", false, NOW);
   const next = await commandGame(game, { type: "tick" }, NOW + 1000);
-  assert.equal(shouldRecordReplay(game, next, "tick"), false);
+  const idle = structuredClone(game); idle.market.tick++;
+  assert.equal(shouldRecordReplay(game, idle, "tick"), false);
   assert.equal(shouldRecordReplay(game, next, "advance"), true);
   assert.equal(shouldRecordReplay(game, next, "order"), true);
   assert.equal(shouldRecordReplay(game, next, "cancel"), true);
@@ -73,4 +74,19 @@ test("replay recording includes resting orders leaving the book without changing
   const next = structuredClone(game);
   next.market.orders = next.market.orders.filter(order => order.id !== "human-resting-order");
   assert.equal(shouldRecordReplay(game, next, "tick"), true);
+});
+
+
+test("recorded book depth and volume survive later quote changes without a human trade", () => {
+  const game=createGame('depth-history','practice',false,NOW);
+  const frame=createReplayFrame(game,'tick',NOW);
+  const next=structuredClone(game);
+  next.market.orders[0].remaining+=1;
+  assert.equal(shouldRecordReplay(game,next,'tick'),true);
+  assert.notDeepEqual(viewGame(next,false,NOW).market.books,frame.session.market.books);
+  assert.deepEqual(frame.session.market.books,viewGame(game,false,NOW).market.books);
+  const volume=structuredClone(game);volume.market.volumes[0]++;
+  assert.equal(shouldRecordReplay(game,volume,'tick'),true);
+  assert.match(frame.label,/Market snapshot/);
+  assert.match(frame.label,/Hand 1/);
 });

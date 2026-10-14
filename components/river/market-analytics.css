@@ -21,6 +21,7 @@
 .clob-heading h3>span{font-size:12px;font-weight:400;color:var(--muted)}
 .clob-heading>span{font-size:11px;text-align:right}
 .clob-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:18px}
+.clob-side{min-height:226px}
 .clob-column-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:0 0 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line)}
 .clob-column-head strong{font-size:11px;font-weight:500;color:var(--green)}
 .clob-ask .clob-column-head strong{color:var(--red)}
@@ -33,3 +34,16 @@
 .clob-caption{font-size:11px;color:var(--muted);line-height:1.6;margin-top:14px}
 @media(max-width:900px){.market-analytics{margin-bottom:28px}.clob-panel{margin-bottom:28px}}
 @media(max-width:600px){.analytics-table-row{grid-template-columns:minmax(0,1fr) 65px 120px;gap:10px}.market-price-chart{margin-top:28px}.analytics-model{gap:7px}.analytics-model i{width:14px}}
+
+.market-chart-wrap{position:relative}
+.market-price-chart:focus-visible{outline:2px solid var(--green);outline-offset:4px}
+.chart-inspection{pointer-events:none}
+.chart-inspection line{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.chart-price-tooltip{position:absolute;top:10px;z-index:5;width:178px;padding:10px 12px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--ink);box-shadow:0 3px 12px #1c1e1d18;font-size:12px;line-height:20px;pointer-events:none;font-variant-numeric:tabular-nums}
+.chart-price-tooltip>strong{display:block;margin-bottom:5px;font-size:11px;color:var(--muted);font-weight:500}
+.chart-price-tooltip>div,.chart-price-tooltip>div>span{display:flex;align-items:center;gap:8px}
+.chart-price-tooltip>div{justify-content:space-between}
+.chart-price-tooltip i{width:12px;height:3px;flex-shrink:0}
+.chart-price-tooltip b{font-weight:600}
+
+.clob-agent-status{min-height:3.4em;margin:8px 0;font-size:12px;line-height:1.7;color:var(--muted)}

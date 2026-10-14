@@ -75,7 +75,7 @@ test("partial quick-buy receipt states requested size, actual cost, and canceled
     outcome: 1, side: "buy", quantity: 25, limitPrice: 0.32, orderType: "ioc" }, NOW);
   const market = getMarketView(bought.market);
   assert.equal(bought.activity.at(-1)?.text,
-    "Bought 4 of 25 Claude shares at 32.0¢ average. Paid 1.28 credits. 21 unfilled shares canceled.");
+    "Bought 4 of 25 Claude shares at 32.0¢ average. Paid $1.28. 21 unfilled shares canceled.");
   assert.equal(market.positions[1].quantity, 4);
   assert.equal(market.cash, 998.72);
   assert.equal(market.reservedCash, 0);
@@ -91,7 +91,7 @@ test("full-fill receipt reports the weighted execution price and exact total", a
     outcome: 1, side: "buy", quantity: 25, limitPrice: 0.4, orderType: "ioc" }, NOW);
   const market = getMarketView(bought.market);
   assert.equal(bought.activity.at(-1)?.text,
-    "Bought 25 of 25 Claude shares at 38.7¢ average. Paid 9.68 credits.");
+    "Bought 25 of 25 Claude shares at 38.7¢ average. Paid $9.68.");
   assert.equal(market.positions[1].quantity, 25);
   assert.equal(market.cash, 990.32);
   assert.equal(market.openOrders.length, 0);
@@ -104,7 +104,7 @@ test("partial limit receipt distinguishes resting shares from canceled quick-ord
     outcome: 1, side: "buy", quantity: 25, limitPrice: 0.32, orderType: "limit" }, NOW);
   const market = getMarketView(bought.market);
   assert.equal(bought.activity.at(-1)?.text,
-    "Bought 4 of 25 Claude shares at 32.0¢ average. Paid 1.28 credits. 21 shares remain open at 32¢.");
+    "Bought 4 of 25 Claude shares at 32.0¢ average. Paid $1.28. 21 shares remain open at 32¢.");
   assert.equal(market.positions[1].quantity, 4);
   assert.equal(market.cash, 998.72);
   assert.equal(market.reservedCash, 6.72);
@@ -120,7 +120,7 @@ test("unfilled quick and limit receipts report zero charged and the correct orde
     const market = getMarketView(ordered.market);
     const disposition = orderType === "ioc" ? "25 unfilled shares canceled." : "25 shares remain open at 32¢.";
     assert.equal(ordered.activity.at(-1)?.text,
-      `No fill: 0 of 25 Claude shares bought. Paid 0.00 credits. ${disposition}`);
+      `No fill: 0 of 25 Claude shares bought. Paid $0.00. ${disposition}`);
     assert.equal(market.positions[1].quantity, 0);
     assert.equal(market.cash, 1000);
     assert.equal(market.reservedCash, orderType === "ioc" ? 0 : 8);
@@ -128,7 +128,7 @@ test("unfilled quick and limit receipts report zero charged and the correct orde
   }
 });
 
-test("partial sell receipt reports credits received and leaves unfilled shares owned", async () => {
+test("partial sell receipt reports dollars received and leaves unfilled shares owned", async () => {
   let game = tradeFixture();
   addLiquidity(game, "sell", 32, 25);
   game = await commandGame(game, { type: "order", pokerRevision: game.poker.revision,
@@ -139,7 +139,7 @@ test("partial sell receipt reports credits received and leaves unfilled shares o
     outcome: 1, side: "sell", quantity: 25, limitPrice: 0.4, orderType: "ioc" }, NOW);
   const market = getMarketView(sold.market);
   assert.equal(sold.activity.at(-1)?.text,
-    "Sold 4 of 25 Claude shares at 40.0¢ average. Received 1.60 credits. 21 unfilled shares canceled.");
+    "Sold 4 of 25 Claude shares at 40.0¢ average. Received $1.60. 21 unfilled shares canceled.");
   assert.equal(market.positions[1].quantity, 21);
   assert.equal(market.positions[1].availableQuantity, 21);
   assert.equal(market.cash, 993.6);

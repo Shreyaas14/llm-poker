@@ -282,3 +282,32 @@
 @media (max-width: 360px) {
   .vesper-table .board-cards { gap: 4px; }
 }
+
+/* Turn cues use color, an outline, and explicit text without changing seat geometry. */
+.vesper-table .seat-active {
+  border-left-color: #285744;
+  border-radius: 6px;
+  background: #edf5ee;
+  box-shadow: 0 0 0 2px #285744;
+}
+
+.vesper-table .seat-active .seat-state {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #285744;
+  color: #fff;
+  font-weight: 700;
+}
+
+.vesper-table .table-turn-status {
+  min-height: 26px;
+  padding: 3px 12px;
+  border-radius: 999px;
+}
+
+.vesper-table .table-turn-status.turn-active {
+  background: #f2f7ef;
+  color: #173d2b;
+  font-size: 13px;
+  font-weight: 700;
+}

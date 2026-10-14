@@ -5,6 +5,7 @@ import { GameError, commandGame, createGame, preparePokerDecision, viewGame } fr
 import type { Game, PreparedPokerDecision } from "./game";
 import { createReplayFrame, shouldRecordReplay } from "./replay";
 import { DEFAULT_MODELS, ProviderError, requestDecision } from "./providers";
+import { prepareMarketRound, reserveMarketRound, finishMarketRound, requestMarketDecisions } from "./market-agents";
 import { PROVIDERS } from "./poker";
 import type { Bootstrap, CommandRequest, GameMode, LeaderboardEntry, Profile, SessionView, GameHistory, GameReplay, ReplayFrame } from "../app/types";
 import { z } from "zod";
@@ -127,7 +128,7 @@ export async function startSession(who: Identity, body: unknown) {
     if ((count?.n??0)>=6) throw new GameError("Today's six live runs are used. Practice is still available.",429,"daily_limit");
   }
   const now=Date.now(), week=weekWindow(now).week;
-  const game=createGame(requestId,mode,ranked,now,modelIds(),personalitiesEnabled);
+  const game=createGame(requestId,mode,ranked,now,modelIds(),personalitiesEnabled,mode === "live" ? "jev" : "local");
   const state = JSON.stringify(game);
   const [result] = await db().batch([db().prepare(`INSERT INTO sessions(id,user_id,week,mode,ranked,status,version,state,created_at,updated_at,lock_until)
     SELECT ?,?,?,?,?, 'playing',0,?,?,?,0
@@ -181,9 +182,49 @@ async function saveCommand(who: Identity, id: string, command: CommandRequest, l
   throw new GameError("The market is updating. Try this order again.",409,"busy");
 }
 
+/** Short optimistic transactions never hold the poker lease across a Jev request. */
+async function saveAgentMutation(who: Identity, id: string, mutate: (game: Game, now: number) => Game | null): Promise<Game | null> {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const row = await ownedRow(id, who);
+    if (row.status === "abandoned") return null;
+    const original = JSON.parse(row.state) as Game, now = Date.now();
+    const game = mutate(original, now);
+    if (!game) return null;
+    game.version = row.version + 1;
+    const state = JSON.stringify(game);
+    const statements = [db().prepare("UPDATE sessions SET state=?,version=?,updated_at=? WHERE id=? AND user_id=? AND version=? AND status!='abandoned'")
+      .bind(state,game.version,now,id,who.id,row.version)];
+    if (game.replayVersion === 1 && shouldRecordReplay(original,game,"tick")) {
+      statements.push(db().prepare("INSERT INTO replay_frames(session_id,version,frame) SELECT ?,?,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND version=? AND state=?)")
+        .bind(id,game.version,JSON.stringify(createReplayFrame(game,"tick",now)),id,who.id,game.version,state));
+    }
+    const [saved] = await db().batch(statements);
+    if (saved.meta.changes) return game;
+  }
+  throw new GameError("The market is updating. Try again shortly.",409,"busy");
+}
+
+async function runMarketAgents(who: Identity, id: string): Promise<SessionView> {
+  const token = crypto.randomUUID();
+  const reserved = await saveAgentMutation(who,id,(game,now) => reserveMarketRound(game,token,now));
+  if (!reserved) return rowView(await ownedRow(id,who));
+  const round = prepareMarketRound(reserved);
+  let answers: Awaited<ReturnType<typeof requestMarketDecisions>> | null = null;
+  try {
+    if (env.AI_GATEWAY_API_KEY && liveReady()) answers = await requestMarketDecisions(round,env.AI_GATEWAY_API_KEY);
+  } catch {
+    // Do not expose provider response bodies or substitute local decisions in a Jev game.
+  }
+  await saveAgentMutation(who,id,(game,now) => finishMarketRound(game,token,round,answers,now));
+  return rowView(await ownedRow(id,who));
+}
+
 export async function executeCommand(who: Identity, id: string, body: unknown) {
   const command = commandSchema.parse(body) as CommandRequest;
-  if (command.type !== "advance" && command.type !== "next_hand") return saveCommand(who,id,command);
+  if (command.type !== "advance" && command.type !== "next_hand") {
+    const view = await saveCommand(who,id,command);
+    return command.type === "tick" ? runMarketAgents(who,id) : view;
+  }
   const token = crypto.randomUUID();
   let original: Game | undefined;
   for (let attempt = 0; attempt < 12; attempt++) {

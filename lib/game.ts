@@ -1,6 +1,8 @@
 import { createHand, applyAction, getObservation, decidePractice, estimateValues, evaluateHand, assignedStyle, shuffledClasses } from "./poker.ts";
+import type { MarketAgentRun } from "./market-agents.ts";
+import type { MarketDriver } from "./market.ts";
 import type { PokerState, Action } from "./poker.ts";
-import { createMarket, advanceMarket, placeHumanOrder, cancelHumanOrder, settleMarket, getMarketView } from "./market.ts";
+import { JEV_MARKET_CALL_LIMIT, createMarket, advanceMarket, placeHumanOrder, cancelHumanOrder, settleMarket, getMarketView } from "./market.ts";
 import type { HumanOrderInput, MarketState, OrderResult } from "./market.ts";
 import type { Activity, GameMode, HandResult, SessionCommand, SessionView, ShowdownOdds } from "../app/types.ts";
 import { DEFAULT_MODELS } from "./providers.ts";
@@ -9,6 +11,7 @@ import { equityKey, showdownEquity } from "./equity.ts";
 export const RULES_VERSION = "river-1";
 export const TRADING_WINDOW_MS = 45000;
 export type Game = {
+  marketAgents?: MarketAgentRun;
   rulesVersion: string; id: string; mode: GameMode; ranked: boolean; rankEligible: boolean;
   hand: number; poker: PokerState; market: MarketState; models: string[];
   results: HandResult[]; activity: Activity[]; sequence: number; version: number;
@@ -55,18 +58,18 @@ function tradeReceipt(input: HumanOrderInput, result: OrderResult, name: string)
   const execution = result.filledQuantity
     ? `${buying ? "Bought" : "Sold"} ${result.filledQuantity} of ${input.quantity} ${name} shares at ${((result.averagePrice ?? 0) * 100).toFixed(1)}¢ average.`
     : `No fill: 0 of ${input.quantity} ${name} shares ${buying ? "bought" : "sold"}.`;
-  const payment = `${buying ? "Paid" : "Received"} ${result.total.toFixed(2)} credits.`;
+  const payment = `${buying ? "Paid" : "Received"} $${result.total.toFixed(2)}.`;
   const remainder = result.remainingQuantity === 0 ? "" : input.orderType === "limit"
     ? ` ${result.remainingQuantity} shares remain open at ${Math.round(input.limitPrice * 100)}¢.`
     : ` ${result.remainingQuantity} unfilled shares canceled.`;
   return `${execution} ${payment}${remainder}`;
 }
-export function createGame(id: string, mode: GameMode, ranked: boolean, now = Date.now(), models: string[] = [...DEFAULT_MODELS], personalitiesEnabled = false): Game {
+export function createGame(id: string, mode: GameMode, ranked: boolean, now = Date.now(), models: string[] = [...DEFAULT_MODELS], personalitiesEnabled = false, marketDriver: MarketDriver = "local"): Game {
   const poker = createHand(randomSeed(), randomNumber() % 4, 1000, personalitiesEnabled ? shuffledClasses(randomSeed()) : undefined, personalitiesEnabled);
   const values = estimateValues(poker, randomNumber(), 512);
   const game: Game = {
     rulesVersion: RULES_VERSION, id, mode, ranked, rankEligible: true, hand: 1,
-    poker, market: createMarket(values, randomNumber(), 1000), models,
+    poker, market: createMarket(values, randomNumber(), 1000, marketDriver), models,
     results: [], activity: [], sequence: 0, version: 0, cashBefore: 1000,
     eventUntil: now + TRADING_WINDOW_MS, lastTickAt: now, values,
     requestIds: [], createdAt: now, notice: null, providerCalls: 0, replayVersion: 1,
@@ -110,6 +113,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   const game = structuredClone(source);
   ensureOdds(game);
   if (command.type === "playback") {
+    if (game.marketAgents) delete game.marketAgents.pending;
     if (command.paused && game.pausedAt === undefined) {
       catchUp(game, now);
       game.pausedAt = now;
@@ -152,12 +156,13 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     if (isPlaying(game) || game.hand >= 5) throw new GameError("This hand is not ready to advance.");
     game.cashBefore = getMarketView(game.market).cash;
     game.hand += 1;
+    if (game.marketAgents) { delete game.marketAgents.pending; game.marketAgents.nextAt = now; }
     game.poker = createHand(randomSeed(), (game.poker.button + 1) % 4, 1000, game.poker.personalitiesEnabled === false ? undefined : game.poker.players.map(player => assignedStyle(game.poker, player.seat)!.id), game.poker.personalitiesEnabled !== false);
     // Make the client guard unique across hands, including otherwise-identical preflop revisions.
     game.poker.revision += game.hand * 10000;
     ensureOdds(game);
     game.values = estimateValues(game.poker, randomNumber(), 512);
-    game.market = createMarket(game.values, randomNumber(), game.cashBefore);
+    game.market = createMarket(game.values, randomNumber(), game.cashBefore, game.market.driver ?? "local");
     game.eventUntil = now + TRADING_WINDOW_MS;
     game.lastTickAt = now;
     log(game, `Hand ${game.hand} dealt. Poker stacks reset; your trading balance carries forward.`, "system", now);
@@ -198,6 +203,7 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
   const market = getMarketView(game.market);
   const ended = !isPlaying(game);
   const paused = game.pausedAt !== undefined;
+  if (!ended && game.market.driver === "jev" && (game.marketAgents?.calls ?? 0) >= JEV_MARKET_CALL_LIMIT && !(game.marketAgents?.pending && game.marketAgents.pending.expiresAt > now)) market.agentNotice = "Jev call limit reached. Existing orders may still fill.";
   const marketNow = game.pausedAt ?? now;
   return {
     id: game.id, version: game.version, pokerRevision: game.poker.revision, mode: game.mode,
