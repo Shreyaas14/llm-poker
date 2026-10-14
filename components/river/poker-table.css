@@ -5,6 +5,19 @@
   isolation: isolate;
 }
 
+.table-panel.vesper-table::before {
+  content: "";
+  position: absolute;
+  top: 84px;
+  left: 4%;
+  right: 4%;
+  height: 260px;
+  border: 1px solid #b5b9b1;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: -1;
+}
+
 .vesper-table .table-turn-status {
   position: absolute;
   top: 145px;
@@ -60,6 +73,7 @@
   width: 184px;
   padding-left: 12px;
   border-left: 2px solid transparent;
+  background: var(--background, #fafaf8);
   pointer-events: auto;
 }
 
@@ -245,6 +259,7 @@
 }
 
 @media (max-width: 540px) {
+  .table-panel.vesper-table::before { top: 143px; left: 0; right: 0; height: 154px; }
   .table-panel.vesper-table { height: 448px; }
   .vesper-table .player-seat { width: calc(50% - 7px); padding-left: 8px; }
   .vesper-table .seat-0, .vesper-table .seat-3 { left: 0; }
