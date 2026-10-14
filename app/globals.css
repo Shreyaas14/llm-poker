@@ -247,5 +247,5 @@ svg { flex-shrink: 0; }
 
 /* Casino marquee brand artwork. */
 .brand { flex-shrink: 0; letter-spacing: 0; }
-.brand-logo { display: block; width: 120px; height: 80px; object-fit: contain; mix-blend-mode: multiply; }
+.brand-logo { display: block; width: 120px; height: 80px; object-fit: contain; }
 @media (max-width: 760px) { .brand-logo { width: 108px; height: 72px; } }
