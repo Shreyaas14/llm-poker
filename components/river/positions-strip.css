@@ -27,7 +27,7 @@
 .positions-strip-detail { display: flex; gap: 4px; font-size: 10px; line-height: 1.6; white-space: nowrap; }
 .positions-strip-detail > span:first-child { color: var(--muted); }
 .positions-strip-empty .positions-strip-quantity, .positions-strip-empty .positions-strip-detail { color: var(--muted); }
-.positions-strip-note { margin-top: 3px; font-size: 10px; line-height: 1.4; color: var(--muted); }
+.positions-strip-note { min-height: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; font-size: 10px; line-height: 1.4; color: var(--muted); }
 
 @media (max-width: 900px) {
   .game-main > .positions-strip { order: 0; width: 100%; }

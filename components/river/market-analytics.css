@@ -21,6 +21,7 @@
 .clob-heading h3>span{font-size:12px;font-weight:400;color:var(--muted)}
 .clob-heading>span{font-size:11px;text-align:right}
 .clob-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:18px}
+.clob-side{min-height:226px}
 .clob-column-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:0 0 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line)}
 .clob-column-head strong{font-size:11px;font-weight:500;color:var(--green)}
 .clob-ask .clob-column-head strong{color:var(--red)}

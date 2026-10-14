@@ -31,11 +31,13 @@ export function TraderActivity({ session }: { session: SessionView | null }) {
   return <section className="trader-activity" aria-label="Synthetic trader positions and executed trades">
     <div className="trader-activity-heading">
       <div><h2>Trader positions</h2><p>{traders.length} simulated traders · {totalVolume.toLocaleString()} shares traded</p></div>
+    </div>
+    <details className="trader-details">
+      <summary>Trader details</summary>
       <div className="trader-view-switch" role="group" aria-label="Position display">
         <button type="button" aria-pressed={view === "net"} onClick={() => setView("net")}>Net trades</button>
         <button type="button" aria-pressed={view === "holdings"} onClick={() => setView("holdings")}>Holdings</button>
       </div>
-    </div>
     <p className="trader-view-note">{view === "net" ? "Bought − sold this hand." : "Shares owned, including starting inventory."}{settled ? " Holdings redeemed; orders closed." : ""}</p>
     {traders.length ? <div className="trader-table-scroll" tabIndex={0} role="region" aria-label="All trader positions, scroll to see more">
       <table className="trader-positions-table">
@@ -53,6 +55,7 @@ export function TraderActivity({ session }: { session: SessionView | null }) {
     </div> : <p className="trader-empty">Trader positions are available after the next market update.</p>}
     {view === "net" && traders.some(trader => trader.netFilledShares === null) ? <p className="trader-view-note">Net trades were not retained for this earlier settled hand.</p> : null}
     {view === "holdings" ? <details className="trader-method"><summary>Starting inventory</summary><p>Makers start with 700 shares per outcome; other traders start with 240. Orders are unfilled quotes.</p></details> : null}
+    </details>
     <div className="trader-tape-heading"><h3>Latest fills</h3><span>Buyer ← seller</span></div>
     {trades.length ? <ol className="trader-tape">{trades.slice(0, 6).map(trade => {
       const model = session.players.find(player => player.seat === trade.outcome)?.name ?? `Outcome ${trade.outcome + 1}`;

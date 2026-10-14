@@ -34,7 +34,7 @@ export function PositionsStrip({ session, readOnly = false }: { session: Session
               <span>PnL</span><span className={quantity > 0 ? pnl < 0 ? "negative" : "positive" : undefined}>{quantity > 0 ? signed(pnl) : "—"}</span>
             </div>
           </div>
-          {notes ? <p className="positions-strip-note">{notes}</p> : null}
+          <p className="positions-strip-note" title={notes || undefined}>{notes || "\u00a0"}</p>
         </div>;
       })}
     </div>
