@@ -1,0 +1,213 @@
+[
+  {
+    "case": 1,
+    "phase": "before",
+    "video": "01-before.mp4",
+    "sha256": "43524bfef66e8753311d0136d849042c1477b37e3c21e025a5e39ec853ae032c",
+    "sourceCommit": "b62b18b89f5d09075064ceb46678a1bb4ca90b35",
+    "frameCount": 34,
+    "uiResult": {
+      "market": "Market prices\nHand 2\n0%\n25%\n50%\n75%\n100%\n0s\nMarket time\nModel\nMarket\nShowdown equity\nGPT\n47.5%\n29.9%\nClaude\n26%\n13.1%\nGemini\n2%\n44.4%\nGrok\n27.5%\n12.6%\nEquity assumes no further folds",
+      "poker": "GPT calls.\n\nPaused \u00b7 Trading disabled"
+    }
+  },
+  {
+    "case": 1,
+    "phase": "after",
+    "video": "01-after.mp4",
+    "sha256": "8a5a0565ef28af0b9a4d2d3236926c32ce1402aff5aafb6acb6f38b7eea49eef",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 33,
+    "uiResult": {
+      "market": "Market prices\nHand 2\n0%\n25%\n50%\n75%\n100%\n0s\nMarket time\nModel\nMarket\nShowdown equity\nGPT\n21.5%\n19.9%\nClaude\n31%\n28.9%\nGemini\n22.5%\n28.1%\nGrok\n23.5%\n23.1%\nEquity assumes no further folds",
+      "poker": "GPT calls.\n\nPaused \u00b7 Trading disabled"
+    }
+  },
+  {
+    "case": 2,
+    "phase": "before",
+    "video": "02-before.mp4",
+    "sha256": "38a80b22c8f77ff491180454fa214fbc3e2f3cf8ddd501bff5dc544a0f69b2d9",
+    "sourceCommit": "b62b18b89f5d09075064ceb46678a1bb4ca90b35",
+    "frameCount": 27,
+    "uiResult": {
+      "receipt": "Last order update \u00b7 5:00:00 AM\n\nNo fill: 0 of 5 Claude shares sold. Received $0.00. 5 shares remain open at 29\u00a2.",
+      "holding": "Claude\n5\nsh\nshares owned\nAvg\n25\u00a2\nPnL\n+$0.00\n\n\u00a0",
+      "openOrders": "Open orders\n0\nNo open orders."
+    }
+  },
+  {
+    "case": 2,
+    "phase": "after",
+    "video": "02-after.mp4",
+    "sha256": "ea18d55a28909d97e9e1b970368cae766e535d6603de0ba3675af0e7f56fff79",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 27,
+    "uiResult": {
+      "receipt": "Last order update \u00b7 5:00:02 AM\n\nSold 5 Claude shares at 29.0\u00a2 from a resting order. Received $1.45. All 5 shares filled. No shares remain open on this order.",
+      "holding": "Claude\n5\nsh\nshares owned\nAvg\n25\u00a2\nPnL\n+$0.00\n\n\u00a0",
+      "openOrders": "Open orders\n0\nNo open orders."
+    }
+  },
+  {
+    "case": 3,
+    "phase": "before",
+    "video": "03-before.mp4",
+    "sha256": "9455eefa3d66746e48fd21b98765b6e5add4f85f36c38e4f2da125906b8e06a8",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 14,
+    "uiResult": {
+      "buyPressed": "true",
+      "ticket": "Claude shares\nBuy\nSell"
+    }
+  },
+  {
+    "case": 3,
+    "phase": "after",
+    "video": "03-after.mp4",
+    "sha256": "2ea99dd1e88df6b91810529641c9276573788ce61aef7efded8b065c504d8347",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 19,
+    "uiResult": {
+      "ticket": "Claude shares\nBuy\nSell",
+      "sellPressed": "true",
+      "details": "Minimum sale price\n29\u00a2\nShowdown equity\n11.4%\nProceeds if fully filled\n$7.25",
+      "buyPressed": "true",
+      "buyTicket": "Gemini shares\nBuy\nSell"
+    }
+  },
+  {
+    "case": 4,
+    "phase": "before",
+    "video": "04-before.mp4",
+    "sha256": "e90f578bbab2fb58aec975c734c46c4614519b77312cbf64ab8561b817406bd8",
+    "sourceCommit": "b62b18b89f5d09075064ceb46678a1bb4ca90b35",
+    "frameCount": 43,
+    "uiResult": {
+      "errorWasVisible": "This hand has ended. Review the new market before trading.",
+      "errorStillVisible": false,
+      "action": "Grok calls."
+    }
+  },
+  {
+    "case": 4,
+    "phase": "after",
+    "video": "04-after.mp4",
+    "sha256": "996c5889fe3526d26b23fe221c41885726b41586a3fed5778ec47faf44bff4bb",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 45,
+    "uiResult": {
+      "errorWasVisible": "This hand has ended. Review the new market before trading.",
+      "errorStillVisibleAfterAction": true,
+      "action": "Grok calls.",
+      "dismissed": true
+    }
+  },
+  {
+    "case": 5,
+    "phase": "before",
+    "video": "05-before.mp4",
+    "sha256": "8e2d60b70040d59d74d3553b88c89ba0b2286ceab8ea404a0737ae1a4b05b2a5",
+    "sourceCommit": "b62b18b89f5d09075064ceb46678a1bb4ca90b35",
+    "frameCount": 15,
+    "uiResult": {
+      "row": "\u2733\nClaude\nYou own 10\n\u2014\n0 sh\n\u2014\n0 sh",
+      "holding": "Claude\n10\nsh\nshares owned\nAvg\n25\u00a2\nPnL\n\u2212$2.50\n\n10 without bids",
+      "ticket": "Claude shares\nBuy\nSell\nFor sale within \u2014\n0 shares\nYou own\n10 shares\nOrder type\nCan carry across actions\nBuy / sell at displayed quote\nLimit order\nQuantity\n$997.50 available\nshares\n10\n25\n50\n100\nMaximum buy price\ncents\nMaximum buy price\n25\u00a2\nShowdown equity\n0%\nMaximum cost\n$1.25\nPayout if all 5 win outright\n$5.00\nPress Play to trade\nContract rules"
+    }
+  },
+  {
+    "case": 5,
+    "phase": "after",
+    "video": "05-after.mp4",
+    "sha256": "0f4cc621663572ae8183c77a2c097226e44ad654d6b52af92bd63330c21c478a",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 11,
+    "uiResult": {
+      "row": "\u2733\nClaude\nFolded \u00b7 You own 10\n\u2014\n0 sh\n\u2014\n0 sh",
+      "holding": "Claude\n10\nsh\nshares owned\nAvg\n25\u00a2\nPnL\n\u2212$2.50\n\nFolded \u00b7 pays $0",
+      "ticket": "Claude shares\nBuy\nSell\n\nClaude folded. These shares pay $0 and can no longer be traded.\n\nFor sale within \u2014\n0 shares\nYou own\n10 shares\nOrder type\nUnfilled shares cancel\nBuy / sell at displayed quote\nLimit order\nQuantity\n$997.50 available\nshares\n10\n25\n50\n100\nMaximum buy price\n\u2014\nShowdown equity\n0%\nMaximum cost\n\u2014\nPayout if all 25 win outright\n$25.00\n\nUnfilled shares cancel. Limit locks while editing.\n\nModel folded\nContract rules",
+      "quantityEnabled": false,
+      "typeEnabled": false
+    }
+  },
+  {
+    "case": 6,
+    "phase": "before",
+    "video": "06-before.mp4",
+    "sha256": "a68bb9f04d3d0b72fe6e4cddf5edd24e8bd548f69bb524c8de1c720c885fab91",
+    "sourceCommit": "b62b18b89f5d09075064ceb46678a1bb4ca90b35",
+    "frameCount": 15,
+    "uiResult": {
+      "negative": {
+        "details": "Maximum buy price\n35\u00a2\nShowdown equity\n41.4%\nMaximum cost\n-$0.35\nPayout if all -1 win outright\n-$1.00",
+        "enabled": true
+      },
+      "zeroLimitEnabled": true
+    }
+  },
+  {
+    "case": 6,
+    "phase": "after",
+    "video": "06-after.mp4",
+    "sha256": "8a06c463969be54fb751b55ed2bc9e3d4d23b13d9c29e5d0728760863c97c47f",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 19,
+    "uiResult": {
+      "invalid": {
+        "details": "Maximum buy price\n35\u00a2\nShowdown equity\n41.4%\nMaximum cost\n\u2014\nPayout if all shares win outright\n\u2014",
+        "enabled": false
+      },
+      "validEnabled": true,
+      "validDetails": "Maximum buy price\n40\u00a2\nShowdown equity\n41.4%\nMaximum cost\n$10.00\nPayout if all 25 win outright\n$25.00",
+      "errorVisible": false
+    }
+  },
+  {
+    "case": 7,
+    "phase": "before",
+    "video": "07-before.mp4",
+    "sha256": "1060a0148bdf6be10c613de9c8d2d0c1185e24d1d486ee4613cbf9313f5195d8",
+    "sourceCommit": "b62b18b89f5d09075064ceb46678a1bb4ca90b35",
+    "frameCount": 15,
+    "uiResult": {
+      "playback": "Play\nPlayback speed\nNormal \u00b7 6s\nFast \u00b7 3s\nRealtime \u00b7 no delay\nPaused"
+    }
+  },
+  {
+    "case": 7,
+    "phase": "after",
+    "video": "07-after.mp4",
+    "sha256": "b1e1c06ca6e1125e657370b7fa213d450e63bf7a0fe94ee0055752d66f77ddca",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 25,
+    "uiResult": {
+      "restored": "Pause\nPlayback speed\nNormal \u00b7 6s\nFast \u00b7 3s\nRealtime \u00b7 no delay\nNext action in 6s",
+      "stayedPaused": true
+    }
+  },
+  {
+    "case": 8,
+    "phase": "before",
+    "video": "08-before.mp4",
+    "sha256": "0a6c800d4d1fcdcf400ab437d2325c3132a3ab7e81b2bfcc803542415a1f38d5",
+    "sourceCommit": "b62b18b89f5d09075064ceb46678a1bb4ca90b35",
+    "frameCount": 10,
+    "uiResult": {
+      "profile": "Your profile\n\nYour public username appears on the weekly leaderboard. Three ranked starts per week are shared across both modes. 3 ranked attempts remaining this week.\n\nPublic username\nSave username",
+      "message": "Unranked challenge complete. Sign in and enter a ranked challenge to join the weekly standings."
+    }
+  },
+  {
+    "case": 8,
+    "phase": "after",
+    "video": "08-after.mp4",
+    "sha256": "cb3c3ee0a51fa2665c84e82b6b54c257ef90ae1006da1b99699d9bdcb869580e",
+    "sourceCommit": "33ee44f6fa2c5ab286cfc4ed485bfa76c0a5a9ab",
+    "frameCount": 10,
+    "uiResult": {
+      "profile": "Your profile\n\nYour public username appears on the weekly leaderboard. Three ranked starts per week are shared across both modes. 3 ranked attempts remaining this week.\n\nPublic username\nSave username",
+      "message": "Unranked challenge complete. Enter a ranked challenge to join the weekly standings."
+    }
+  }
+]
