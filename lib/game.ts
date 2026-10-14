@@ -72,7 +72,7 @@ export function createGame(id: string, mode: GameMode, ranked: boolean, now = Da
   const values = estimateValues(poker, randomNumber(), 512);
   const game: Game = {
     rulesVersion: RULES_VERSION, id, mode, ranked, rankEligible: true, hand: 1,
-    poker, market: createMarket(values, randomNumber(), 1000, marketDriver), models,
+    poker, market: createMarket(marketDriver === "jev" ? [1, 1, 1, 1] : values, randomNumber(), 1000, marketDriver), models,
     results: [], activity: [], sequence: 0, version: 0, cashBefore: 1000,
     eventUntil: now + TRADING_WINDOW_MS, lastTickAt: now, values,
     requestIds: [], createdAt: now, notice: null, providerCalls: 0, replayVersion: 1,
@@ -169,7 +169,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
     game.poker.revision += game.hand * 10000;
     ensureOdds(game);
     game.values = estimateValues(game.poker, randomNumber(), 512);
-    game.market = createMarket(game.values, randomNumber(), game.cashBefore, game.market.driver ?? "local");
+    game.market = createMarket(game.market.driver === "jev" ? [1, 1, 1, 1] : game.values, randomNumber(), game.cashBefore, game.market.driver ?? "local");
     game.eventUntil = now + TRADING_WINDOW_MS;
     game.lastTickAt = now;
     log(game, `Hand ${game.hand} dealt. Poker stacks reset; your trading balance carries forward.`, "system", now);
@@ -199,7 +199,7 @@ export async function commandGame(source: Game, command: SessionCommand, now: nu
   } else {
     game.values = estimateValues(game.poker, randomNumber(), 512);
     // Publish the changed poker state before any informed synthetic arrivals.
-    game.market = advanceMarket(game.market, game.values, 0);
+    game.market = advanceMarket(game.market, game.market.driver === "jev" ? game.poker.players.map(player => player.folded ? 0 : 1) : game.values, 0);
     // Jev markets receive only their provider-selected orders; a news event
     // must never silently substitute the local decision models.
     game.marketReactionPending = game.market.driver !== "jev";
