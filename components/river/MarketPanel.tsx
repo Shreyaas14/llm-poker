@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { ModelMark } from "./PokerTable";
 import type { Bootstrap, GameMode, SessionCommand, SessionView } from "../../app/types";
 import { equityDescription, OrderBook, percent } from "./MarketAnalytics";
 
@@ -57,7 +58,7 @@ export function MarketPanel({ session, bootstrap, busy, playing, onCommand, onSt
         const payout = session?.market.payouts?.[model.seat] ?? 0;
         const detail = holding > 0 ? `${holding} shares` : session?.players.find(p => p.seat === model.seat)?.folded ? "Folded" : ended && payout > 0 ? "Winner" : null;
         return <button type="button" key={model.seat} className={`market-row ${selected === model.seat ? "selected" : ""}`} aria-pressed={selected === model.seat} onClick={() => { setSelected(model.seat); setTicketError(null); }}>
-          <span className="market-model"><span className="market-model-name">{session.mode === "practice" ? model.name : model.modelId || model.name}</span>{detail ? <small className="market-row-detail">{detail}</small> : null}</span>
+          <span className="market-model"><ModelMark name={model.name} /><span className="market-model-label"><span className="market-model-name">{session.mode === "practice" ? model.name : model.modelId || model.name}</span>{detail ? <small className="market-row-detail">{detail}</small> : null}</span></span>
           <span className="price-box" aria-label={ended ? `Payout ${payout} credits` : `Buy ${price(rowBook?.bestAsk)}`}>{ended ? payout > 0 && payout < 1 ? `1/${session?.winners.length}` : price(payout) : price(rowBook?.bestAsk)}</span><span className="price-box sell-price" aria-label={ended ? payout > 0 ? "Winner" : "Lost" : `Sell ${price(rowBook?.bestBid)}`}>{ended ? payout > 0 ? "WIN" : "—" : price(rowBook?.bestBid)}</span>
         </button>;
       })}</div></> : null}
