@@ -6,6 +6,7 @@ import type { GameHistory, GameReplay } from "../../app/types";
 import { PokerTable, type TableSeat } from "./PokerTable";
 import { credits, MarketPanel, price, signed } from "./MarketPanel";
 import { MarketAnalytics } from "./MarketAnalytics";
+import { PositionsStrip } from "./PositionsStrip";
 import { TraderActivity } from "./TraderActivity";
 import "./game-history.css";
 
@@ -109,7 +110,6 @@ export function ReplayPlayer({ replay, onClose }: { replay: GameReplay; onClose:
     classId: player.classId, className: player.className, description: player.description,
   }));
   const hands = [...new Set(frames.map(frame => frame.session.hand))];
-  const positions = session.market.positions.filter(position => position.quantity > 0);
 
   return <section className="replay-view" aria-label="Game replay">
     <div className="replay-heading"><div><span className="eyebrow"><History size={12} /> GAME REPLAY</span><h2>{session.mode === "live" ? "Live models" : "Practice"} challenge</h2><p>Recorded play · {session.ranked ? "Ranked" : "Unranked"} · Trading is disabled</p></div><button type="button" className="secondary-button" onClick={onClose}><ArrowLeft size={12} />Your games</button></div>
@@ -121,10 +121,11 @@ export function ReplayPlayer({ replay, onClose }: { replay: GameReplay; onClose:
     <section className="stats-strip" aria-label="Recorded challenge account"><div className="stat-block"><span className="stat-label">Available credits</span><div className="stat-value">{credits(session.market.availableCash)}<small>CR</small></div></div><div className="stat-block"><span className="stat-label">Account value</span><div className="stat-value">{credits(session.market.totalLiquidationValue)}<small>CR</small></div></div><div className="stat-block"><span className="stat-label">Total PnL</span><div className={`stat-value ${session.pnl < 0 ? "negative" : "positive"}`}>{signed(session.pnl)}<small>CR</small></div></div><div className="stat-block"><span className="stat-label">Recorded hand</span><div className="hand-progress-top"><span>Hand {session.hand} of 5</span><span>{session.street === "complete" ? "Settled" : session.street}</span></div></div></section>
     {session.status === "complete" ? <section className="settlement-panel"><span className="eyebrow">FINAL RESULT</span><h2>Five hands complete</h2><div className={`settlement-value ${session.pnl < 0 ? "negative" : "positive"}`}>{signed(session.pnl)} <small>credits</small></div><div className="result-rows">{session.results.map(result => <div className="result-hand" key={result.hand}><small>HAND {result.hand}</small><span className={result.pnl < 0 ? "negative" : "positive"}>{signed(result.pnl)}</span></div>)}</div></section> : null}
     <div className="game-layout"><div className="game-main"><div className="section-title"><h2>The recorded table</h2><span>Hand {session.hand} · {session.street === "complete" ? "Showdown" : session.street}</span></div>
+      <PositionsStrip session={session} readOnly />
       <PokerTable seats={seats} board={session.board} pot={session.pot} winningCards={session.winningCards} street={session.street} started busy={false} settled={session.status !== "playing"} />
       <div className="table-controls"><div className="event-summary" aria-live={playing ? "off" : "polite"}><strong>{frame.label}</strong><p>Step {index + 1} of {frames.length} · <time dateTime={frame.at}>{new Date(frame.at).toLocaleTimeString("en-US")}</time></p></div></div>
       <MarketAnalytics session={session} />
-      <div className="lower-layout"><section className="small-panel"><div className="section-title"><h2>Your recorded positions</h2><span>{positions.length} open</span></div>{positions.length ? positions.map(position => <div className="position-row" key={position.outcome}><div><strong>{session.players.find(player => player.seat === position.outcome)?.name}</strong><small>{position.quantity} shares · avg {price(position.averageCost)}</small></div><div><strong className={position.unrealizedPnl < 0 ? "negative" : "positive"}>{signed(position.unrealizedPnl)}</strong><small>{credits(position.liquidationValue)} value</small></div></div>) : <div className="empty-state">No positions at this step.</div>}{session.market.openOrders.length ? <><div className="section-title"><h2>Recorded open orders</h2></div>{session.market.openOrders.map(order => <div className="order-row" key={order.id}>{order.side === "buy" ? "Buy" : "Sell"} {order.remainingQuantity} {session.players.find(player => player.seat === order.outcome)?.name} at {price(order.limitPrice)}</div>)}</> : null}</section>
+      <div className="lower-layout"><section className="small-panel"><div className="section-title"><h2>Recorded open orders</h2><span>{session.market.openOrders.length}</span></div>{session.market.openOrders.length ? session.market.openOrders.map(order => <div className="order-row" key={order.id}>{order.side === "buy" ? "Buy" : "Sell"} {order.remainingQuantity} {session.players.find(player => player.seat === order.outcome)?.name} at {price(order.limitPrice)}</div>) : <div className="empty-state">No open orders at this step.</div>}</section>
         <section className="small-panel"><div className="section-title"><h2>Recorded activity</h2><span>Hand {session.hand}</span></div><div className="activity-list">{session.activity.slice(-10).reverse().map(activity => <div className="activity-row" key={activity.id}><div>{activity.text}<small>{activity.kind === "trade" ? "Your trade" : `Hand ${activity.hand}`}</small></div></div>)}</div></section></div>
       <TraderActivity session={session} />
     </div><div className="market-column"><MarketPanel session={session} bootstrap={null} busy={false} readOnly /></div></div>
