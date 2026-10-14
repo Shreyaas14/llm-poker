@@ -184,7 +184,9 @@ function mid(state: MarketState, outcome: number): number | null {
   return bid !== null && ask !== null ? (bid + ask) / 200 : state.lastPriceTicks[outcome] === null ? null : state.lastPriceTicks[outcome]! / 100;
 }
 function recordHistory(state: MarketState): void {
-  const entry = { tick: state.tick, prices: Array.from({ length: OUTCOMES }, (_, i) => mid(state, i)) };
+  // History is a current contract mark, not an execution record. A folded
+  // outcome marks at zero; books.lastPrice still preserves its actual last fill.
+  const entry = { tick: state.tick, prices: Array.from({ length: OUTCOMES }, (_, i) => state.values[i] === 0 ? 0 : mid(state, i)) };
   if (state.history.at(-1)?.tick === state.tick) state.history[state.history.length - 1] = entry;
   else state.history.push(entry);
   if (state.history.length > 180) state.history.shift();
@@ -272,6 +274,7 @@ export function advanceMarket(previous: MarketState, values?: number[], ticks = 
       // Known-impossible contracts cannot remain an accidental stale-price prize.
       state.orders = state.orders.filter(o => nextValues[o.outcome] > 0);
       for (const trader of state.traders) trader.nextWake = Math.min(trader.nextWake, state.tick + integer(state, 1, trader.reaction));
+      if (ticks === 0) recordHistory(state);
     }
   }
   for (let step = 0; step < ticks; step++) {
