@@ -55,7 +55,7 @@ function tradeReceipt(input: HumanOrderInput, result: OrderResult, name: string)
   const execution = result.filledQuantity
     ? `${buying ? "Bought" : "Sold"} ${result.filledQuantity} of ${input.quantity} ${name} shares at ${((result.averagePrice ?? 0) * 100).toFixed(1)}¢ average.`
     : `No fill: 0 of ${input.quantity} ${name} shares ${buying ? "bought" : "sold"}.`;
-  const payment = `${buying ? "Paid" : "Received"} ${result.total.toFixed(2)} credits.`;
+  const payment = `${buying ? "Paid" : "Received"} $${result.total.toFixed(2)}.`;
   const remainder = result.remainingQuantity === 0 ? "" : input.orderType === "limit"
     ? ` ${result.remainingQuantity} shares remain open at ${Math.round(input.limitPrice * 100)}¢.`
     : ` ${result.remainingQuantity} unfilled shares canceled.`;

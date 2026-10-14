@@ -290,7 +290,7 @@ export function placeHumanOrder(previous: MarketState, input: HumanOrderInput): 
   if (!Number.isFinite(input.limitPrice) || ticks < 1 || ticks > 99 || Math.abs(input.limitPrice * 100 - ticks) > 1e-7) throw new Error("Limit price must be from 0.01 to 0.99 in one-cent increments.");
   if (previous.values[input.outcome] === 0) throw new Error("This outcome can no longer pay out.");
   const cost = input.quantity * ticks * UNITS_PER_CENT;
-  if (input.side === "buy" && cost > availableCash(previous, HUMAN)) throw new Error("Insufficient available credits for that limit order.");
+  if (input.side === "buy" && cost > availableCash(previous, HUMAN)) throw new Error("Insufficient available cash for that limit order.");
   if (input.side === "sell" && input.quantity > availableShares(previous, HUMAN, input.outcome)) throw new Error("Insufficient available shares.");
   const state = copy(previous);
   const result = submit(state, HUMAN, input.outcome, input.side, input.quantity, ticks, input.orderType);
@@ -310,7 +310,7 @@ export function cancelHumanOrder(previous: MarketState, id: string): MarketState
 export function settleMarket(previous: MarketState, payouts: number[]): MarketState {
   if (payouts.length !== OUTCOMES || payouts.some(v => !Number.isFinite(v) || v < 0 || v > 1)) throw new Error("Invalid settlement payouts.");
   const winners = payouts.filter(v => v > 0).length;
-  if (winners === 0 || payouts.some(v => v > 0 && Math.abs(v - 1 / winners) > 1e-10)) throw new Error("Main-pot winners must split one credit equally.");
+  if (winners === 0 || payouts.some(v => v > 0 && Math.abs(v - 1 / winners) > 1e-10)) throw new Error("Main-pot winners must split one dollar equally.");
   if (previous.status === "settled") {
     if (previous.payouts!.some((v, i) => Math.abs(v - payouts[i]) > 1e-10)) throw new Error("A settled market cannot be changed.");
     return copy(previous);
