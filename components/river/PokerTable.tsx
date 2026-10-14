@@ -38,7 +38,7 @@ export function PokerTable({ seats, board, pot, street, started, busy, settled, 
   seats: TableSeat[]; board: string[]; pot: number; street: string; started: boolean; busy: boolean; settled: boolean; winningCards?: string[];
 }) {
   const acting = seats.find(seat => seat.active && !seat.folded && !seat.allIn);
-  const turnLabel = !started ? "Ready to deal" : settled ? "Hand settled" : acting ? `${acting.name}’s turn${busy ? " · Deciding…" : ""}` : busy ? "Resolving hand…" : "Waiting for next action";
+  const turnLabel = !started ? "Ready to deal" : settled ? "Hand settled" : acting ? `${acting.name}’s turn${busy ? " · Deciding…" : " · To act"}` : busy ? "Resolving hand…" : "Waiting for next action";
   return <section className="table-panel vesper-table" aria-label={`Poker table, ${street.replaceAll("_", " ")}`}>
     <div className="table-surface">
       <div className={`table-turn-status ${acting && !settled ? "turn-active" : ""}`} role="status" aria-live="polite">{turnLabel}</div>

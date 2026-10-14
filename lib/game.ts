@@ -1,5 +1,4 @@
 import { createHand, applyAction, getObservation, decidePractice, estimateValues, evaluateHand, assignedStyle, shuffledClasses } from "./poker.ts";
-import { marketProbabilities } from "./market-pricing.ts";
 import type { MarketAgentRun } from "./market-agents.ts";
 import type { MarketDriver } from "./market.ts";
 import type { PokerState, Action } from "./poker.ts";
@@ -216,11 +215,6 @@ export function viewGame(game: Game, busy = false, now = Date.now()): SessionVie
   const odds = ensureOdds(game);
   const market = getMarketView(game.market);
   const ended = !isPlaying(game);
-  if (!ended) {
-    const marks = market.books.map(book => book.midpoint ?? book.lastPrice);
-    market.probabilities = marketProbabilities(marks, game.poker.players.map(player => !player.folded));
-    market.probabilityIndicative = game.poker.players.some(player => !player.folded && marks[player.seat] == null);
-  }
   const paused = game.pausedAt !== undefined;
   if (!ended && game.market.driver === "jev" && (game.marketAgents?.calls ?? 0) >= JEV_MARKET_CALL_LIMIT && !(game.marketAgents?.pending && game.marketAgents.pending.expiresAt > now)) market.agentNotice = "Jev call limit reached. Existing orders may still fill.";
   const marketNow = game.pausedAt ?? now;
