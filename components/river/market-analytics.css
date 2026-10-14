@@ -6,7 +6,7 @@
 .chart-grid-line{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke}
 .chart-axis-label{font-family:inherit;font-size:12px;fill:var(--muted)}
 .analytics-comparison{font-size:12px;font-variant-numeric:tabular-nums}
-.analytics-table-row{display:grid;grid-template-columns:minmax(0,1fr) 80px 135px;align-items:center;gap:16px;min-height:36px;border-bottom:1px solid var(--line)}
+.analytics-table-row{display:grid;grid-template-columns:minmax(0,1fr) 110px 135px;align-items:center;gap:16px;min-height:36px;border-bottom:1px solid var(--line)}
 .analytics-table-row>strong{text-align:right;font-weight:500}
 .analytics-table-head{min-height:32px;font-size:11px;color:var(--muted)}
 .analytics-table-head>span:not(:first-child){text-align:right}
@@ -47,3 +47,5 @@
 .chart-price-tooltip b{font-weight:600}
 
 .clob-agent-status{min-height:3.4em;margin:8px 0;font-size:12px;line-height:1.7;color:var(--muted)}
+
+.market-probability-note{font-size:11px;line-height:1.7;color:var(--muted);margin-top:12px}

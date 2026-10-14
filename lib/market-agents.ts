@@ -1,7 +1,8 @@
 import { catchUp, viewGame } from "./game.ts";
 import type { Game } from "./game.ts";
-import { advanceMarket, replaceTraderOrders, JEV_MARKET_CALL_LIMIT } from "./market.ts";
+import { advanceMarket, arbitrateCompleteSets, replaceTraderOrders, JEV_MARKET_CALL_LIMIT } from "./market.ts";
 import type { TraderOrder } from "./market.ts";
+import { coherentMakerOrders, marketProbabilities } from "./market-pricing.ts";
 import { ProviderError } from "./providers.ts";
 
 export const JEV_MODEL = "typesafe-ai/jev";
@@ -14,7 +15,8 @@ export type MarketRound = { state: string; traders: TraderMenu[] };
 export type MarketAnswers = Record<string, string>;
 
 const STRATEGIES = {
-  maker: "Supply two-sided liquidity, earn spreads, and keep balanced inventory.",
+  maker: "Maintain deep two-sided liquidity across all viable outcomes, earn spreads, and keep balanced inventory. Prefer quoting over hold unless risk makes quoting unsuitable.",
+  arbitrage: "Trade fully funded complete sets.",
   fundamental: "Infer expected main-pot payouts from the spectator-visible cards, betting, and market data; seek positive value.",
   equity: "Use displayed showdown equity, allowing for future folds, and diversify inventory across viable outcomes.",
   momentum: "Favor recent price trends, while avoiding excessive inventory risk.",
@@ -27,20 +29,14 @@ export function prepareMarketRound(game: Game): MarketRound {
   const visible = viewGame(game, false, game.lastTickAt);
   const market = visible.market;
   const eligible = visible.players.filter(player => !player.folded);
-  const openingPrice = 1 / Math.max(1, eligible.length);
-  const traders = game.market.traders.map(trader => {
+  const references = marketProbabilities(market.books.map(book=>book.midpoint??book.lastPrice),visible.players.map(player=>!player.folded));
+  const traders = game.market.traders.filter(trader=>trader.kind!=="arbitrage").map(trader => {
     const choices: Record<string, TraderOrder[]> = { hold: [] };
     const order = (outcome: number, side: "buy" | "sell", quantity: number, priceTicks: number): TraderOrder => ({ outcome, side, quantity, priceTicks: Math.max(1, Math.min(99, priceTicks)) });
-    const anchors = visible.players.map(player => {
-      const book = market.books.find(book => book.outcome === player.seat);
-      return book?.midpoint ?? book?.lastPrice ?? openingPrice;
-    });
+    const anchors = references;
     if (trader.kind === "maker") {
-      for (const [name, spread] of [["tight_quotes", 2], ["wide_quotes", 5]] as const) {
-        choices[name] = eligible.flatMap(player => [0, 1, 2].flatMap(level => [
-          order(player.seat, "buy", 8 + level * 8, Math.floor(anchors[player.seat] * 100 + 1e-8) - spread - level * 3),
-          order(player.seat, "sell", 8 + level * 8, Math.ceil(anchors[player.seat] * 100 - 1e-8) + spread + level * 3),
-        ]));
+      for (const [name, spread] of [["tight_quotes", 1], ["wide_quotes", 3]] as const) {
+        choices[name] = coherentMakerOrders(references,visible.players.map(player=>!player.folded),spread);
       }
     } else {
       eligible.forEach(player => {
@@ -61,6 +57,7 @@ export function prepareMarketRound(game: Game): MarketRound {
       hand: visible.hand, street: visible.street, board: visible.board, pot: visible.pot,
       actor: visible.actor, button: visible.button,
       players: visible.players.map(p => ({ seat: p.seat, name: p.name, cards: p.cards, folded: p.folded, allIn: p.allIn, stack: p.stack, action: p.lastAction, personality: p.className, description: p.description })),
+      marketProbabilities: references,
       showdownEquity: visible.odds, tick: market.tick, history: market.history,
       books: market.books.map(book => ({ outcome: book.outcome, bids: book.bids.slice(0,6), asks: book.asks.slice(0,6), bestBid: book.bestBid, bestAsk: book.bestAsk, midpoint: book.midpoint, lastPrice: book.lastPrice })),
       recentTrades: market.recentTrades.slice(0,6),
@@ -134,6 +131,7 @@ export function finishMarketRound(source: Game, token: string, round: MarketRoun
   for (const trader of arrivals) {
     if (answers[trader.id] !== "hold") game.market = replaceTraderOrders(game.market, trader.id, trader.choices[answers[trader.id]]);
   }
+  game.market = arbitrateCompleteSets(game.market);
   game.market.agentNotice = game.marketAgents!.calls >= MARKET_CALL_LIMIT ? "Jev call limit reached. Existing orders may still fill." : null;
   return game;
 }

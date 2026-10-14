@@ -1,3 +1,5 @@
+import { coherentMakerOrders, marketProbabilities } from "./market-pricing.ts";
+
 /** A funded, deterministic four-outcome exchange. Never send MarketState to a client. */
 export const JEV_MARKET_CALL_LIMIT = 600;
 export const UNITS_PER_CREDIT = 120_000;
@@ -9,7 +11,7 @@ export type MarketDriver = "local" | "jev";
 export type TraderOrder = { outcome: number; side: "buy" | "sell"; quantity: number; priceTicks: number };
 export type Side = "buy" | "sell";
 export type OrderType = "ioc" | "limit";
-export type TraderKind = "maker" | "fundamental" | "equity" | "momentum" | "contrarian" | "noise";
+export type TraderKind = "maker" | "fundamental" | "equity" | "momentum" | "contrarian" | "noise" | "arbitrage";
 export interface HumanOrderInput {
   outcome: number;
   side: Side;
@@ -50,8 +52,10 @@ export interface MarketView {
   cash: number; availableCash: number; reservedCash: number;
   totalLiquidationValue: number; pnl: number; realizedPnl: number;
   positions: PositionView[]; books: MarketBookView[]; openOrders: PublicOrder[];
-  fills: PublicFill[]; history: { tick: number; prices: (number | null)[] }[];
+  fills: PublicFill[]; history: { tick: number; prices: (number | null)[]; probabilities?: number[] }[];
   traderPositions: TraderPositionView[]; recentTrades: MarketTradeView[];
+  probabilities?: number[];
+  probabilityIndicative?: boolean;
   payouts: number[] | null;
 }
 export interface OrderResult {
@@ -64,6 +68,8 @@ export interface Account {
   costBasisUnits: number[]; realizedPnlUnits: number;
   /** Preserve executed inventory at settlement; current shares are then redeemed to zero. */
   settlementHoldings?: number[];
+  /** Signed minted minus redeemed sets; conversions are not market fills. */
+  completeSetDelta?: number;
 }
 export interface RestingOrder {
   id: string; owner: string; outcome: number; side: Side;
@@ -72,6 +78,7 @@ export interface RestingOrder {
 }
 export interface Trader {
   id: string; kind: TraderKind; bias: number[]; beliefs: number[];
+  initialSharesPerOutcome?: number;
   reaction: number; nextWake: number; seenRevision: number;
 }
 export interface InternalFill {
@@ -86,12 +93,12 @@ export interface MarketState {
   collateralUnits: number; completeSetsIssued: number;
   accounts: Record<string, Account>; traders: Trader[]; orders: RestingOrder[];
   fills: InternalFill[]; lastPriceTicks: (number | null)[]; volumes: number[];
-  history: { tick: number; prices: (number | null)[] }[];
+  history: { tick: number; prices: (number | null)[]; probabilities?: number[] }[];
   payouts: number[] | null;
 }
 
 function copy(state: MarketState): MarketState { return structuredClone(state); }
-function seededShares(kind: TraderKind): number { return kind === "maker" ? 700 : 240; }
+function seededShares(kind: TraderKind): number { return kind === "maker" || kind === "arbitrage" ? 2000 : 240; }
 function random(state: MarketState): number {
   let x = state.rngState;
   x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
@@ -184,7 +191,8 @@ function mid(state: MarketState, outcome: number): number | null {
   return bid !== null && ask !== null ? (bid + ask) / 200 : state.lastPriceTicks[outcome] === null ? null : state.lastPriceTicks[outcome]! / 100;
 }
 function recordHistory(state: MarketState): void {
-  const entry = { tick: state.tick, prices: Array.from({ length: OUTCOMES }, (_, i) => mid(state, i)) };
+  const prices = Array.from({ length: OUTCOMES }, (_, i) => mid(state, i));
+  const entry = { tick: state.tick, prices, probabilities: state.status === "settled" ? [...state.payouts!] : marketProbabilities(prices,state.values.map(v=>v>0)) };
   if (state.history.at(-1)?.tick === state.tick) state.history[state.history.length - 1] = entry;
   else state.history.push(entry);
   if (state.history.length > 180) state.history.shift();
@@ -204,34 +212,32 @@ function beliefsFor(state: MarketState, trader: Trader): number[] {
   return weights.map(v => v / total);
 }
 function wakeTrader(state: MarketState, trader: Trader): void {
+  if (trader.kind === "arbitrage") return;
   state.orders = state.orders.filter(o => o.owner !== trader.id);
   trader.beliefs = beliefsFor(state, trader);
   trader.seenRevision = state.revision;
-  const outcomes = trader.kind === "maker" ? [0, 1, 2, 3] : [integer(state, 0, OUTCOMES - 1)];
+  if (trader.kind === "maker") {
+    const account = state.accounts[trader.id];
+    const mean = account.shares.reduce((sum,n)=>sum+n,0)/OUTCOMES;
+    const weights = trader.beliefs.map((value,i)=>Math.max(0,value-Math.max(-.08,Math.min(.08,(account.shares[i]-mean)*.0001))));
+    for (const quote of coherentMakerOrders(weights,state.values.map(v=>v>0),integer(state,1,2))) safeSubmit(state,trader.id,quote.outcome,quote.side,quote.quantity,quote.priceTicks,state.tick+18);
+    trader.nextWake=state.tick+trader.reaction+integer(state,0,3);
+    return;
+  }
+  const outcomes = [integer(state, 0, OUTCOMES - 1)];
   for (const outcome of outcomes) {
     if (state.values[outcome] === 0) continue;
     const inventory = state.accounts[trader.id].shares[outcome];
     const meanInventory = state.accounts[trader.id].shares.reduce((a, b) => a + b, 0) / OUTCOMES;
     const inventorySkew = Math.max(-0.08, Math.min(0.08, (inventory - meanInventory) * 0.00035));
     const fair = Math.max(0.005, Math.min(0.995, trader.beliefs[outcome] - inventorySkew));
-    if (trader.kind === "maker") {
-      const spread = 0.015 + random(state) * 0.015;
-      for (let level = 0; level < 3; level++) {
-        const quantity = integer(state, 8, 20) + level * 8;
-        const bid = Math.floor((fair - spread - level * 0.025) * 100);
-        const ask = Math.ceil((fair + spread + level * 0.025) * 100);
-        safeSubmit(state, trader.id, outcome, "buy", quantity, bid, state.tick + 18);
-        safeSubmit(state, trader.id, outcome, "sell", quantity, ask, state.tick + 18);
-      }
-    } else {
-      const quantity = integer(state, 3, trader.kind === "noise" ? 12 : 20);
-      const offset = (random(state) - 0.5) * (trader.kind === "noise" ? 0.08 : 0.03);
-      const fairTicks = Math.max(1, Math.min(99, Math.round((fair + offset) * 100)));
-      const bestBid = top(state, outcome, "buy"), bestAsk = top(state, outcome, "sell");
-      const side: Side = bestAsk !== null && fairTicks >= bestAsk ? "buy"
-        : bestBid !== null && fairTicks <= bestBid ? "sell" : random(state) < 0.5 ? "buy" : "sell";
-      safeSubmit(state, trader.id, outcome, side, quantity, fairTicks, state.tick + integer(state, 8, 20));
-    }
+    const quantity = integer(state, 3, trader.kind === "noise" ? 12 : 20);
+    const offset = (random(state) - 0.5) * (trader.kind === "noise" ? 0.08 : 0.03);
+    const fairTicks = Math.max(1, Math.min(99, Math.round((fair + offset) * 100)));
+    const bestBid = top(state, outcome, "buy"), bestAsk = top(state, outcome, "sell");
+    const side: Side = bestAsk !== null && fairTicks >= bestAsk ? "buy"
+      : bestBid !== null && fairTicks <= bestBid ? "sell" : random(state) < 0.5 ? "buy" : "sell";
+    safeSubmit(state, trader.id, outcome, side, quantity, fairTicks, state.tick + integer(state, 8, 20));
   }
   trader.nextWake = state.tick + trader.reaction + integer(state, 0, 3);
 }
@@ -244,19 +250,20 @@ export function createMarket(values: number[], seed: number, bankroll = 1000, dr
     collateralUnits: 0, completeSetsIssued: 0, accounts: {}, traders: [], orders: [], fills: [],
     lastPriceTicks: [null, null, null, null], volumes: [0, 0, 0, 0], history: [], payouts: null };
   state.accounts[HUMAN] = { id: HUMAN, cashUnits: startingBankrollUnits, shares: [0, 0, 0, 0], costBasisUnits: [0, 0, 0, 0], realizedPnlUnits: 0 };
-  const kinds: TraderKind[] = ["maker", "maker", "fundamental", "fundamental", "fundamental", "fundamental", "equity", "equity", "equity", "momentum", "momentum", "contrarian", "contrarian", "noise", "noise", "noise"];
+  const kinds: TraderKind[] = ["maker", "maker", "fundamental", "fundamental", "fundamental", "fundamental", "equity", "equity", "equity", "momentum", "momentum", "contrarian", "contrarian", "noise", "noise", "noise", "arbitrage"];
   kinds.forEach((kind, index) => {
-    const id = `trader-${index}`, funding = (kind === "maker" ? 1800 : 800) * UNITS_PER_CREDIT;
+    const id = `trader-${index}`, funding = (kind === "maker" || kind === "arbitrage" ? 6000 : 800) * UNITS_PER_CREDIT;
     const sets = seededShares(kind);
     state.initialTotalCashUnits += funding;
     state.collateralUnits += sets * UNITS_PER_CREDIT; state.completeSetsIssued += sets;
     state.accounts[id] = { id, cashUnits: funding - sets * UNITS_PER_CREDIT, shares: [sets, sets, sets, sets],
       costBasisUnits: normalized.map(v => v * sets * UNITS_PER_CREDIT), realizedPnlUnits: 0 };
-    state.traders.push({ id, kind, bias: normalized.map(() => (random(state) - 0.5) * (kind === "noise" ? 0.9 : kind === "maker" ? 0.15 : 0.45)),
+    state.traders.push({ id, kind, initialSharesPerOutcome: sets, bias: normalized.map(() => (random(state) - 0.5) * (kind === "noise" ? 0.9 : kind === "maker" ? 0.15 : 0.45)),
       beliefs: [...normalized], reaction: kind === "maker" ? integer(state, 2, 4) : kind === "fundamental" ? integer(state, 2, 5) : integer(state, 4, 10), nextWake: 0, seenRevision: -1 });
   });
   // Seed real funded orders. Any opening prints are actual matches, not generated chart points.
   if (driver === "local") for (const trader of state.traders) wakeTrader(state, trader);
+  runCompleteSetArbitrage(state);
   recordHistory(state);
   return state;
 }
@@ -272,6 +279,7 @@ export function advanceMarket(previous: MarketState, values?: number[], ticks = 
       // Known-impossible contracts cannot remain an accidental stale-price prize.
       state.orders = state.orders.filter(o => nextValues[o.outcome] > 0);
       for (const trader of state.traders) trader.nextWake = Math.min(trader.nextWake, state.tick + integer(state, 1, trader.reaction));
+      if (ticks === 0) recordHistory(state);
     }
   }
   for (let step = 0; step < ticks; step++) {
@@ -280,6 +288,7 @@ export function advanceMarket(previous: MarketState, values?: number[], ticks = 
     // Shuffle due agents by seeded arrival jitter to avoid permanent array-order advantage.
     const due = state.traders.filter(t => t.nextWake <= state.tick).map(trader => ({ trader, priority: random(state) })).sort((a, b) => a.priority - b.priority);
     if (state.driver !== "jev") for (const { trader } of due) wakeTrader(state, trader);
+    runCompleteSetArbitrage(state);
     recordHistory(state);
   }
   return state;
@@ -291,11 +300,12 @@ export function reactMarket(previous: MarketState): MarketState {
   if (state.status === "settled" || state.driver === "jev") return state;
   // Faster participants tend to react first; seeded jitter avoids a fixed
   // ordering. Everyone else retains their normal staggered wake schedule.
-  const arrivals = state.traders.filter(trader => trader.seenRevision < state.revision)
+  const arrivals = state.traders.filter(trader => trader.kind !== "arbitrage" && trader.seenRevision < state.revision)
     .map(trader => ({ trader, priority: trader.reaction + random(state) * 3 }))
     .sort((a, b) => a.priority - b.priority).slice(0, 4);
   for (const { trader } of arrivals) wakeTrader(state, trader);
-  if (arrivals.length) recordHistory(state);
+  runCompleteSetArbitrage(state);
+  recordHistory(state);
   return state;
 }
 
@@ -348,6 +358,7 @@ export function settleMarket(previous: MarketState, payouts: number[]): MarketSt
   }
   if (state.collateralUnits !== 0) throw new Error("Settlement collateral invariant failed.");
   state.status = "settled"; state.payouts = [...payouts];
+  recordHistory(state);
   return state;
 }
 
@@ -360,7 +371,7 @@ function depth(state: MarketState, outcome: number, side: Side): DepthLevel[] {
 /** Public projection: executed holdings and named fills, never seeds, future data, synthetic cash balances, or beliefs. */
 export function getMarketView(state: MarketState): MarketView {
   const human = state.accounts[HUMAN];
-  const kindNames: Record<TraderKind, string> = { maker: "Maker", fundamental: "Value", equity: "Equity", momentum: "Momentum", contrarian: "Contrarian", noise: "Noise" };
+  const kindNames: Record<TraderKind, string> = { maker: "Maker", fundamental: "Value", equity: "Equity", momentum: "Momentum", contrarian: "Contrarian", noise: "Noise", arbitrage: "Complete-Set Arb" };
   const kindCounts = new Map<TraderKind, number>();
   const names = new Map<string, string>([[HUMAN, "You"]]);
   for (const trader of state.traders) {
@@ -370,11 +381,11 @@ export function getMarketView(state: MarketState): MarketView {
   }
   const traderPositions: TraderPositionView[] = state.traders.map(trader => {
     const account = state.accounts[trader.id];
-    const initialSharesPerOutcome = seededShares(trader.kind);
+    const initialSharesPerOutcome = trader.initialSharesPerOutcome ?? (trader.kind === "maker" ? 700 : trader.kind === "arbitrage" ? 2000 : 240);
     const executedHoldings = state.status === "settled" ? account.settlementHoldings : account.shares;
     return { id: trader.id, name: names.get(trader.id)!, kind: trader.kind, holdings: [...account.shares], initialSharesPerOutcome,
       // Legacy settled sessions have no pre-redemption snapshot. Never present redemption as a sale.
-      netFilledShares: executedHoldings?.map(quantity => quantity - initialSharesPerOutcome) ?? null,
+      netFilledShares: executedHoldings?.map(quantity => quantity - initialSharesPerOutcome - (account.completeSetDelta ?? 0)) ?? null,
       openOrders: state.orders.filter(order => order.owner === trader.id).length };
   });
   const participant = (id: string) => ({ id, name: names.get(id) ?? "Trader" });
@@ -393,6 +404,8 @@ export function getMarketView(state: MarketState): MarketView {
   const totalLiquidationValue = human.cashUnits / UNITS_PER_CREDIT + positions.reduce((sum, p) => sum + p.liquidationValue, 0);
   return { status: state.status, tick: state.tick, startingBankroll: state.startingBankrollUnits / UNITS_PER_CREDIT,
     driver: state.driver ?? "local", agentNotice: state.agentNotice ?? null,
+    probabilities: state.status === "settled" ? [...state.payouts!] : marketProbabilities(Array.from({length:OUTCOMES},(_,i)=>mid(state,i)),state.values.map(v=>v>0)),
+    probabilityIndicative: state.status !== "settled" && state.values.some((v,i)=>v>0 && mid(state,i)===null),
     cash: human.cashUnits / UNITS_PER_CREDIT, availableCash: availableCash(state, HUMAN) / UNITS_PER_CREDIT,
     reservedCash: reservedCash(state, HUMAN) / UNITS_PER_CREDIT, totalLiquidationValue,
     pnl: totalLiquidationValue - state.startingBankrollUnits / UNITS_PER_CREDIT, realizedPnl: human.realizedPnlUnits / UNITS_PER_CREDIT,
@@ -406,19 +419,100 @@ export function getMarketView(state: MarketState): MarketView {
     fills: state.fills.slice(-20).reverse().map(publicFill),
     traderPositions, recentTrades: state.fills.slice(-20).reverse().map(fill => ({ id: fill.id, tick: fill.tick, outcome: fill.outcome,
       price: fill.priceTicks / 100, quantity: fill.quantity, buyer: participant(fill.buyer), seller: participant(fill.seller) })),
-    history: state.history.map(h => ({ tick: h.tick, prices: [...h.prices] })), payouts: state.payouts ? [...state.payouts] : null };
+    history: state.history.map(h => ({ tick: h.tick, prices: [...h.prices], ...(h.probabilities ? { probabilities: [...h.probabilities] } : {}) })), payouts: state.payouts ? [...state.payouts] : null };
 }
 
 /** Jev selects bounded candidates; this engine still enforces inventory and funding. */
 export function replaceTraderOrders(previous: MarketState, owner: string, orders: TraderOrder[]): MarketState {
   if (previous.driver !== "jev" || previous.status !== "open") throw new Error("Jev market is not open.");
   if (!previous.traders.some(t => t.id === owner)) throw new Error("Unknown trader.");
-  if (orders.length > 24 || orders.some(o => !Number.isInteger(o.outcome) || o.outcome < 0 || o.outcome >= OUTCOMES || !["buy", "sell"].includes(o.side) || !Number.isSafeInteger(o.quantity) || o.quantity < 1 || o.quantity > 25 || !Number.isInteger(o.priceTicks) || o.priceTicks < 1 || o.priceTicks > 99)) throw new Error("Invalid trader order.");
+  if (orders.length > 48 || orders.some(o => !Number.isInteger(o.outcome) || o.outcome < 0 || o.outcome >= OUTCOMES || !["buy", "sell"].includes(o.side) || !Number.isSafeInteger(o.quantity) || o.quantity < 1 || o.quantity > 400 || !Number.isInteger(o.priceTicks) || o.priceTicks < 1 || o.priceTicks > 99)) throw new Error("Invalid trader order.");
   const state = copy(previous);
   state.orders = state.orders.filter(o => o.owner !== owner);
   for (const order of orders) {
     if (state.values[order.outcome] > 0) safeSubmit(state, owner, order.outcome, order.side, order.quantity, order.priceTicks, state.tick + 12);
   }
+  recordHistory(state);
+  return state;
+}
+
+/** Atomic, funded complete-set conversions; all four tokens together redeem for exactly $1. */
+function convertCompleteSets(state: MarketState, owner: string, quantity: number, split: boolean): void {
+  const account = state.accounts[owner], units = quantity * UNITS_PER_CREDIT;
+  if (split) {
+    if (availableCash(state, owner) < units) throw new Error("Unfunded complete-set split.");
+    account.cashUnits -= units;
+    state.collateralUnits += units;
+    state.completeSetsIssued += quantity;
+    for (let i = 0; i < OUTCOMES; i++) {
+      account.shares[i] += quantity;
+      account.costBasisUnits[i] += units / OUTCOMES;
+    }
+  } else {
+    if (account.shares.some((_, i) => availableShares(state, owner, i) < quantity) || state.collateralUnits < units)
+      throw new Error("Unfunded complete-set redemption.");
+    let basis = 0;
+    for (let i = 0; i < OUTCOMES; i++) {
+      const redeemed = account.costBasisUnits[i] * quantity / account.shares[i];
+      basis += redeemed;
+      account.costBasisUnits[i] -= redeemed;
+      account.shares[i] -= quantity;
+      if (!account.shares[i]) account.costBasisUnits[i] = 0;
+    }
+    account.cashUnits += units;
+    state.collateralUnits -= units;
+    state.completeSetsIssued -= quantity;
+    account.realizedPnlUnits += units - basis;
+  }
+  account.completeSetDelta = (account.completeSetDelta ?? 0) + (split ? quantity : -quantity);
+}
+
+function runCompleteSetArbitrage(state: MarketState): void {
+  const owner = state.traders.find(t => t.kind === "arbitrage")?.id;
+  if (!owner || !state.accounts[owner] || state.status !== "open") return;
+  const active = state.values.map((v, i) => v > 0 ? i : -1).filter(i => i >= 0);
+  const inactive = state.values.map((v, i) => v === 0 ? i : -1).filter(i => i >= 0);
+  if (!active.length) return;
+  const best = (outcome: number, side: Side) => state.orders
+    .filter(o => o.owner !== owner && o.outcome === outcome && o.side === side && o.remaining > 0)
+    .sort((a, b) => (side === "sell" ? a.priceTicks - b.priceTicks : b.priceTicks - a.priceTicks) || a.sequence - b.sequence)[0];
+  // Bounded work per update. Recompute each basket at the actual available depth.
+  for (let step = 0; step < 64; step++) {
+    const asks = active.map(i => best(i, "sell")), bids = active.map(i => best(i, "buy"));
+    const askSum = asks.every(Boolean) ? asks.reduce((n, o) => n + o!.priceTicks, 0) : Infinity;
+    const bidSum = bids.every(Boolean) ? bids.reduce((n, o) => n + o!.priceTicks, 0) : -Infinity;
+    if (askSum < 100) {
+      // Folded tokens pay zero, but must still be owned to redeem a full set.
+      const quantity = Math.min(1000, ...asks.map(o => o!.remaining),
+        Math.floor(availableCash(state, owner) / (askSum * UNITS_PER_CENT)),
+        ...inactive.map(i => availableShares(state, owner, i)));
+      if (quantity > 0) {
+        for (let i = 0; i < active.length; i++) {
+          const result = submit(state, owner, active[i], "buy", quantity, asks[i]!.priceTicks, "ioc");
+          if (result.filledQuantity !== quantity) throw new Error("Incomplete arbitrage basket.");
+        }
+        convertCompleteSets(state, owner, quantity, false);
+        continue;
+      }
+    }
+    if (bidSum > 100) {
+      const quantity = Math.min(1000, ...bids.map(o => o!.remaining), Math.floor(availableCash(state, owner) / UNITS_PER_CREDIT));
+      if (quantity > 0) {
+        convertCompleteSets(state, owner, quantity, true);
+        for (let i = 0; i < active.length; i++) {
+          const result = submit(state, owner, active[i], "sell", quantity, bids[i]!.priceTicks, "ioc");
+          if (result.filledQuantity !== quantity) throw new Error("Incomplete arbitrage basket.");
+        }
+        continue;
+      }
+    }
+    break;
+  }
+}
+
+export function arbitrateCompleteSets(previous: MarketState): MarketState {
+  const state = copy(previous);
+  runCompleteSetArbitrage(state);
   recordHistory(state);
   return state;
 }
