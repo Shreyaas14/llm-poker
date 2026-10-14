@@ -10,7 +10,7 @@ References: [Linear’s 2026 interface refresh](https://linear.app/now/behind-th
 
 ## Game and market
 
-- Five independent four-seat no-limit Texas Hold'em hands; 1,000 poker chips per seat, rotating dealer, 5/10 blinds. The human starts with 1,000 trading credits and carries settled cash between hands.
+- Five independent four-seat no-limit Texas Hold'em hands; 1,000 poker chips per seat, rotating dealer, 5/10 blinds. The human starts with $1,000 in play money and carries settled cash between hands.
 - Each model sees only its own hole cards, public action history, board, and legal actions. The server deals from a secret 256-bit seed and validates every action. No model has tools or direct state access.
 - Personalities are opt-in through the unchecked **Enable personalities** checkbox before a challenge starts. Without them, live models receive no assigned style and practice/forecast decisions use one neutral policy. When enabled, four poker personalities—Shark (selective, aggressive value betting), Bully (wide ranges and pressure), Maniac (frequent bluffs and large bets), and Opportunist (cheap-pot steals, cautious against resistance)—are randomly shuffled across the providers for each new challenge and persist across all five hands. The assigned class drives live prompts, practice decisions, and forecast rollouts. The choice persists across reloads and all five hands. Legacy saved sessions keep their original assignments. Class badges provide a short hover, focus, or tap description.
 - The spectator and synthetic market traders know all dealt hole cards. Future board cards and shuffle seeds remain server-only.
@@ -24,7 +24,7 @@ References: [Linear’s 2026 interface refresh](https://linear.app/now/behind-th
 
 ## Forecast interpretation
 
-After each poker event, 512 rollouts estimate expected main-pot contract payout under the style-based practice policies. Each simulated poker decision is made through its own private observation. Rollouts independently resample unknown future cards; they never inspect the real future deck. Synthetic traders interpret this estimate differently, react at different times, and manage finite inventories.
+After each poker event, 512 rollouts estimate expected main-pot contract payout under the style-based practice policies. Each simulated poker decision is made through its own private observation. Rollouts independently resample unknown future cards; they never inspect the real future deck. Practice traders interpret this estimate differently, react at different times, and manage finite inventories. In new Live games, Jev chooses bounded order actions using these estimates, dealt cards, recent prices, strategy instructions, and funded inventories. It does not receive the undealt deck or RNG state.
 
 These forecasts are a behavior surrogate for live LLMs, not a measured calibration of GPT, Claude, Gemini, or Grok. At 512 samples, a single binary probability has worst-case Monte Carlo standard error around 2.2 percentage points; policy error is additional. Tests include exact fixtures and convergence toward 4,096-sample references. Live calibration, held-out probability scoring, and richer trader policies are future work.
 
@@ -40,7 +40,19 @@ The defaults in `lib/providers.ts` were checked against the Gateway catalog on 2
 
 Store `AI_GATEWAY_API_KEY` as a Sites runtime secret. Local development can use the ignored, owner-readable `.dev.vars`; never commit it. Copy the names from `.dev.vars.example`, not credentials into source. `LIVE_MODELS_READY=true` enables live starts only after provider verification. Practice runs remain usable without a key. Never silently substitute practice decisions in a live run; an upstream failure pauses the same poker state for retry or End run.
 
-The approved demo key has a $5 nonrenewing budget and seven-day expiry. Each account can start at most six live runs per rolling day. Each live run durably reserves at most 320 provider attempts, including failures, with one correction attempt for an illegal action. Billing verification and purchased-credit model eligibility are controlled by Vercel.
+The approved demo key has a $5 nonrenewing budget and seven-day expiry. Each account can start at most six live runs per rolling day. Each live run durably reserves at most 320 poker-provider attempts, including failures, with one correction attempt for an illegal action. New Live runs additionally allow up to 600 Jev market requests, including failed, stale, or interrupted attempts; these are separate from the poker allowance and share the Gateway billing budget. Billing verification and purchased-credit model eligibility are controlled by Vercel.
+
+## Jev market traders
+
+New **Live** games use `typesafe-ai/jev` through Vercel AI Gateway's documented [`POST /v1/evaluate`](https://vercel.com/docs/ai-gateway/modalities/decision) endpoint. The existing server-side `AI_GATEWAY_API_KEY` is used; no new SDK or provider key is needed. `LIVE_MODELS_READY=true` should only be enabled after verifying both poker providers and Jev access. Practice and already-saved games keep their local trader engine, including across subsequent hands.
+
+- One request batches 16 independent typed Choice questions, at most once every three seconds while play is active. Makers choose tight quotes, wide quotes, or hold; other strategies choose a buy/sell outcome and small preset size, or hold. Price candidates are derived by code from estimated payouts and each trader's fixed bias. Jev chooses the action; it does not directly mutate the exchange or invent arbitrary orders.
+- Each trader retains its strategy instructions and inventory. The matching engine rechecks funding and owned shares against the latest state, preserves human orders, prevents self-trades, and handles settlement. Quote updates expire after 12 active market seconds; hold retains existing orders until filled or expired. New Jev hands begin without locally seeded quotes or trades and populate after the first successful market poll.
+- Model calls happen outside the database transaction and poker lease. A persisted reservation prevents duplicate polls from issuing concurrent Jev calls. Results from changed poker revisions/hands, expired requests, or paused games are discarded. Human trading and poker decisions can continue while Jev responds.
+- An eight-second request timeout and a separate 600-request game cap bound attempts. Failure is visible beside the order book; existing orders remain until filled or expired. There is **no automatic local-bot fallback** in Jev games. Pause stops market requests and invalidates pending decisions; replay never calls Jev.
+- The context includes every dealt hole card (as seen by the human spectator), current board/actions, payout estimates, top recorded orders, recent prices, and synthetic inventories. It excludes the undealt deck, seed, RNG, human identity, and credentials. Market prices remain distinct from showdown equity.
+
+Mocked adapter and service tests cover batch validation, missing/invalid answers, failures, call limits, duplicate requests, human fills during a Jev call, stale poker state, pause/resume, and funded settlement. No paid Jev request was made during implementation; deployment credentials, account eligibility, actual model quality, and live latency remain to be verified in a controlled Live run.
 
 ## Validation
 

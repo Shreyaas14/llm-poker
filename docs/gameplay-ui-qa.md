@@ -32,3 +32,8 @@ git diff --check
 All 101 tests passed. TypeScript, changed-component lint, production build, and diff checks passed. The practice API smoke test completed five hands and verified trading, persistence, owner-only replay access, and unchanged results after replay reads.
 
 Full `npm run lint` still reports the pre-existing `react-hooks/set-state-in-effect` error in `app/page.tsx:85` and the existing logo `<img>` warning. Both were reproduced against the unmodified `main` file during the initial QA.
+
+
+## Jev Live traders follow-up
+
+New Live sessions use Jev through Gateway; Practice and legacy sessions keep local strategies. The added adapter/market/service tests use mocked provider replies, with no billed calls. The complete suite now passes 115 tests. TypeScript, targeted lint, the production build, and a five-hand Practice API smoke test (64 poker actions, 139 replay steps) passed. Real Jev connectivity, decision quality, and latency have not been measured. See README's Jev market traders section for the bounded action menus, concurrency guards, and separate call budget.

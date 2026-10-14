@@ -45,3 +45,5 @@
 .chart-price-tooltip>div{justify-content:space-between}
 .chart-price-tooltip i{width:12px;height:3px;flex-shrink:0}
 .chart-price-tooltip b{font-weight:600}
+
+.clob-agent-status{min-height:3.4em;margin:8px 0;font-size:12px;line-height:1.7;color:var(--muted)}

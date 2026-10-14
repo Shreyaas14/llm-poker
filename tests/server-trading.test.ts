@@ -5,6 +5,7 @@ import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { createMarket } from "../lib/market.ts";
 import { GameError } from "../lib/game.ts";
 import type { Observation, Action } from "../lib/poker.ts";
 
@@ -61,7 +62,12 @@ function heldDecision(action?: Action) {
 async function start() {
   const owner = { id: crypto.randomUUID(), authenticated: true };
   const game = await server.startSession(owner, { requestId: crypto.randomUUID(), mode: "live", ranked: false });
-  return { owner, game };
+  // These pre-existing tests isolate poker concurrency with the local market engine.
+  const row=storage.prepare("SELECT state FROM sessions WHERE id=?").get(game.id)!;
+  const state=JSON.parse(String(row.state));
+  state.market=createMarket(state.values,1);
+  storage.prepare("UPDATE sessions SET state=? WHERE id=?").run(JSON.stringify(state),game.id);
+  return { owner, game: (await server.getSession(owner,game.id))! };
 }
 
 test("a trade completes while a model thinks and survives the later poker commit", async () => {
@@ -190,4 +196,89 @@ test("a failed model response retains concurrent fills and releases the poker le
     assert.equal(held.calls(),2);
     assert.equal(storage.prepare("SELECT provider_calls FROM sessions WHERE id=?").get(game.id)!.provider_calls,2);
   } finally { held.release(); await advancing.catch(()=>{}); }
+});
+
+async function startJev() {
+  const owner={id:crypto.randomUUID(),authenticated:true};
+  const game=await server.startSession(owner,{requestId:crypto.randomUUID(),mode:'live',ranked:false});
+  assert.equal(game.market.driver,'jev');assert.ok(game.market.books.every(b=>b.bestAsk==null));
+  return {owner,game};
+}
+function heldMarket(fail=false) {
+  let release!:()=>void,started!:()=>void,calls=0;
+  const entered=new Promise<void>(resolve=>{started=resolve;});
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const oldFetch=globalThis.fetch;
+  globalThis.fetch=async(url,init)=>{
+    assert.equal(url,'https://ai-gateway.vercel.sh/v1/evaluate');
+    calls++;const body=JSON.parse(String(init?.body));started();await gate;
+    if(fail)return new Response('private gateway details',{status:503});
+    return Response.json({answers:Object.fromEntries(Object.keys(body.questions).map(id=>[id,{type:'choice',choice:id==='trader-0'?'tight_quotes':'hold'}]))});
+  };
+  return {entered,release,calls:()=>calls,restore:()=>{globalThis.fetch=oldFetch;}};
+}
+
+test('Jev polling batches once, preserves a concurrent human order, and records its fill', async()=>{
+  const {owner,game}=await startJev(),held=heldMarket();
+  const ticking=server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
+  await held.entered;
+  try {
+    const traded=await server.executeCommand(owner,game.id,{type:'order',hand:1,pokerRevision:game.pokerRevision,
+      outcome:0,side:'buy',quantity:1,limitPrice:.99,orderType:'limit',requestId:crypto.randomUUID()});
+    assert.equal(traded.market.openOrders.length,1);
+    await server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
+    assert.equal(held.calls(),1);
+    held.release();const result=await ticking;
+    assert.equal(result.market.positions[0].quantity,1);assert.equal(result.market.openOrders.length,0);
+    assert.ok(Math.abs(result.market.cash-999.01)<1e-9);
+    const frames=storage.prepare('SELECT frame FROM replay_frames WHERE session_id=? ORDER BY version').all(game.id);
+    assert.equal(JSON.parse(String(frames.at(-1)!.frame)).session.market.positions[0].quantity,1);
+    const saved=JSON.parse(String(storage.prepare('SELECT state FROM sessions WHERE id=?').get(game.id)!.state));
+    assert.equal(saved.marketAgents.calls,1);assert.equal(saved.marketAgents.pending,undefined);
+  } finally {held.release();await ticking.catch(()=>{});held.restore();}
+});
+
+test('poker may advance while Jev is deciding and stale market choices are discarded',async()=>{
+  const {owner,game}=await startJev(),market=heldMarket(),poker=heldDecision();
+  const ticking=server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
+  await market.entered;
+  try {
+    const advancing=server.executeCommand(owner,game.id,{type:'advance',pokerRevision:game.pokerRevision,requestId:crypto.randomUUID()});
+    await poker.entered;poker.release();const advanced=await advancing;
+    assert.equal(advanced.pokerRevision,game.pokerRevision+1);
+    market.release();const result=await ticking;
+    assert.equal(result.pokerRevision,advanced.pokerRevision);
+    assert.ok(result.market.books.every(b=>b.bestAsk==null&&b.bestBid==null));
+  } finally {poker.release();market.release();await ticking.catch(()=>{});market.restore();}
+});
+
+test('pause and resume invalidate an in-flight Jev round without disabling later orders',async()=>{
+  const {owner,game}=await startJev(),held=heldMarket();
+  const ticking=server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
+  await held.entered;
+  try {
+    await server.executeCommand(owner,game.id,{type:'playback',paused:true,requestId:crypto.randomUUID()});
+    await server.executeCommand(owner,game.id,{type:'playback',paused:false,requestId:crypto.randomUUID()});
+    held.release();const result=await ticking;
+    assert.equal(result.paused,false);assert.ok(result.market.books.every(b=>b.bestAsk==null));
+    const ordered=await server.executeCommand(owner,game.id,{type:'order',hand:1,pokerRevision:result.pokerRevision,
+      outcome:0,side:'buy',quantity:1,limitPrice:.01,orderType:'limit',requestId:crypto.randomUUID()});
+    assert.equal(ordered.market.openOrders.length,1);
+  } finally {held.release();await ticking.catch(()=>{});held.restore();}
+});
+
+test('a failed Jev call counts against the durable allowance and never falls back to local bots',async()=>{
+  const {owner,game}=await startJev(),held=heldMarket(true);
+  const ticking=server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
+  await held.entered;
+  try {
+    held.release();const result=await ticking;
+    assert.match(result.market.agentNotice!,/unavailable/);
+    assert.ok(!result.market.agentNotice!.includes('private'));
+    assert.ok(result.market.books.every(b=>b.bestAsk==null));
+    const state=JSON.parse(String(storage.prepare('SELECT state FROM sessions WHERE id=?').get(game.id)!.state));
+    assert.equal(state.marketAgents.calls,1);assert.equal(state.marketAgents.pending,undefined);
+    await server.executeCommand(owner,game.id,{type:'tick',requestId:crypto.randomUUID()});
+    assert.equal(held.calls(),1,'failure still observes cooldown');
+  } finally {held.release();await ticking.catch(()=>{});held.restore();}
 });

@@ -1,9 +1,12 @@
 /** A funded, deterministic four-outcome exchange. Never send MarketState to a client. */
+export const JEV_MARKET_CALL_LIMIT = 600;
 export const UNITS_PER_CREDIT = 120_000;
 const UNITS_PER_CENT = UNITS_PER_CREDIT / 100;
 const OUTCOMES = 4;
 const HUMAN = "human";
 
+export type MarketDriver = "local" | "jev";
+export type TraderOrder = { outcome: number; side: "buy" | "sell"; quantity: number; priceTicks: number };
 export type Side = "buy" | "sell";
 export type OrderType = "ioc" | "limit";
 export type TraderKind = "maker" | "fundamental" | "equity" | "momentum" | "contrarian" | "noise";
@@ -42,6 +45,7 @@ export interface MarketTradeView {
   buyer: { id: string; name: string }; seller: { id: string; name: string };
 }
 export interface MarketView {
+  driver?: MarketDriver; agentNotice?: string | null;
   status: "open" | "settled"; tick: number; startingBankroll: number;
   cash: number; availableCash: number; reservedCash: number;
   totalLiquidationValue: number; pnl: number; realizedPnl: number;
@@ -75,6 +79,7 @@ export interface InternalFill {
   quantity: number; buyer: string; seller: string; aggressorSide: Side;
 }
 export interface MarketState {
+  driver?: MarketDriver; agentNotice?: string | null;
   version: 1; status: "open" | "settled"; tick: number; rngState: number;
   sequence: number; revision: number; values: number[];
   startingBankrollUnits: number; initialTotalCashUnits: number;
@@ -231,10 +236,10 @@ function wakeTrader(state: MarketState, trader: Trader): void {
   trader.nextWake = state.tick + trader.reaction + integer(state, 0, 3);
 }
 
-export function createMarket(values: number[], seed: number, bankroll = 1000): MarketState {
+export function createMarket(values: number[], seed: number, bankroll = 1000, driver: MarketDriver = "local"): MarketState {
   if (!Number.isFinite(bankroll) || bankroll < 0 || bankroll > 10_000_000) throw new Error("Invalid bankroll.");
   const normalized = validateValues(values), startingBankrollUnits = Math.round(bankroll * UNITS_PER_CREDIT);
-  const state: MarketState = { version: 1, status: "open", tick: 0, rngState: (seed >>> 0) || 0x9e3779b9,
+  const state: MarketState = { driver, agentNotice: driver === "jev" ? "Jev traders are preparing orders." : null, version: 1, status: "open", tick: 0, rngState: (seed >>> 0) || 0x9e3779b9,
     sequence: 0, revision: 0, values: normalized, startingBankrollUnits, initialTotalCashUnits: startingBankrollUnits,
     collateralUnits: 0, completeSetsIssued: 0, accounts: {}, traders: [], orders: [], fills: [],
     lastPriceTicks: [null, null, null, null], volumes: [0, 0, 0, 0], history: [], payouts: null };
@@ -251,7 +256,7 @@ export function createMarket(values: number[], seed: number, bankroll = 1000): M
       beliefs: [...normalized], reaction: kind === "maker" ? integer(state, 2, 4) : kind === "fundamental" ? integer(state, 2, 5) : integer(state, 4, 10), nextWake: 0, seenRevision: -1 });
   });
   // Seed real funded orders. Any opening prints are actual matches, not generated chart points.
-  for (const trader of state.traders) wakeTrader(state, trader);
+  if (driver === "local") for (const trader of state.traders) wakeTrader(state, trader);
   recordHistory(state);
   return state;
 }
@@ -274,7 +279,7 @@ export function advanceMarket(previous: MarketState, values?: number[], ticks = 
     state.orders = state.orders.filter(o => o.expiresAt === null || o.expiresAt > state.tick);
     // Shuffle due agents by seeded arrival jitter to avoid permanent array-order advantage.
     const due = state.traders.filter(t => t.nextWake <= state.tick).map(trader => ({ trader, priority: random(state) })).sort((a, b) => a.priority - b.priority);
-    for (const { trader } of due) wakeTrader(state, trader);
+    if (state.driver !== "jev") for (const { trader } of due) wakeTrader(state, trader);
     recordHistory(state);
   }
   return state;
@@ -373,6 +378,7 @@ export function getMarketView(state: MarketState): MarketView {
   });
   const totalLiquidationValue = human.cashUnits / UNITS_PER_CREDIT + positions.reduce((sum, p) => sum + p.liquidationValue, 0);
   return { status: state.status, tick: state.tick, startingBankroll: state.startingBankrollUnits / UNITS_PER_CREDIT,
+    driver: state.driver ?? "local", agentNotice: state.agentNotice ?? null,
     cash: human.cashUnits / UNITS_PER_CREDIT, availableCash: availableCash(state, HUMAN) / UNITS_PER_CREDIT,
     reservedCash: reservedCash(state, HUMAN) / UNITS_PER_CREDIT, totalLiquidationValue,
     pnl: totalLiquidationValue - state.startingBankrollUnits / UNITS_PER_CREDIT, realizedPnl: human.realizedPnlUnits / UNITS_PER_CREDIT,
@@ -387,4 +393,18 @@ export function getMarketView(state: MarketState): MarketView {
     traderPositions, recentTrades: state.fills.slice(-20).reverse().map(fill => ({ id: fill.id, tick: fill.tick, outcome: fill.outcome,
       price: fill.priceTicks / 100, quantity: fill.quantity, buyer: participant(fill.buyer), seller: participant(fill.seller) })),
     history: state.history.map(h => ({ tick: h.tick, prices: [...h.prices] })), payouts: state.payouts ? [...state.payouts] : null };
+}
+
+/** Jev selects bounded candidates; this engine still enforces inventory and funding. */
+export function replaceTraderOrders(previous: MarketState, owner: string, orders: TraderOrder[]): MarketState {
+  if (previous.driver !== "jev" || previous.status !== "open") throw new Error("Jev market is not open.");
+  if (!previous.traders.some(t => t.id === owner)) throw new Error("Unknown trader.");
+  if (orders.length > 24 || orders.some(o => !Number.isInteger(o.outcome) || o.outcome < 0 || o.outcome >= OUTCOMES || !["buy", "sell"].includes(o.side) || !Number.isSafeInteger(o.quantity) || o.quantity < 1 || o.quantity > 25 || !Number.isInteger(o.priceTicks) || o.priceTicks < 1 || o.priceTicks > 99)) throw new Error("Invalid trader order.");
+  const state = copy(previous);
+  state.orders = state.orders.filter(o => o.owner !== owner);
+  for (const order of orders) {
+    if (state.values[order.outcome] > 0) safeSubmit(state, owner, order.outcome, order.side, order.quantity, order.priceTicks, state.tick + 12);
+  }
+  recordHistory(state);
+  return state;
 }

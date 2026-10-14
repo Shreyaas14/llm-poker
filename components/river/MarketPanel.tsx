@@ -117,6 +117,6 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
       <div className="trade-feedback"><span className="trade-feedback-label">Last order update · <time dateTime={lastTrade.at}>{new Date(lastTrade.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time></span><p>{lastTrade.text}</p></div>
       <button type="button" aria-label="Dismiss order update" onClick={() => setDismissedTrade(lastTrade.id)}><X size={14} /></button>
     </div> : null}
-    {session ? <OrderBook book={book} name={selectedPlayer?.name} settled={ended} /> : null}
+    {session ? <OrderBook book={book} name={selectedPlayer?.name} settled={ended} traderEngine={session.market.driver} agentNotice={session.market.agentNotice} /> : null}
   </aside>;
 }

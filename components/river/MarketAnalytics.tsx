@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import type { SessionView, ShowdownOdds } from "../../app/types";
-import type { MarketBookView } from "../../lib/market";
+import type { MarketBookView, MarketDriver } from "../../lib/market";
 import "./market-analytics.css";
 
 const LINE_COLORS = ["#245c45", "#9a6028", "#495a8b", "#9e3f32"];
@@ -120,13 +120,14 @@ export function MarketAnalytics({ session }: { session: SessionView | null }) {
   </section>;
 }
 
-export function OrderBook({ book, name, settled }: { book: MarketBookView | undefined; name: string | undefined; settled: boolean }) {
+export function OrderBook({ book, name, settled, traderEngine, agentNotice }: { book: MarketBookView | undefined; name: string | undefined; settled: boolean; traderEngine?: MarketDriver; agentNotice?: string | null }) {
   const bids = book?.bids.slice(0, 6) ?? [];
   const asks = book?.asks.slice(0, 6) ?? [];
   const maxQuantity = Math.max(1, ...bids.map(level => level.quantity), ...asks.map(level => level.quantity));
   const spread = book?.bestAsk != null && book.bestBid != null ? Math.round((book.bestAsk - book.bestBid) * 100) : null;
   return <section className="clob-panel" aria-label={`Order book for ${name ?? "selected model"}`}>
     <div className="clob-heading"><h3>Order book <span>{name}</span></h3><span>{settled ? "Settled" : spread == null ? "No two-sided quote" : `${spread}¢ spread`}</span></div>
+    {traderEngine === "jev" ? <p className="clob-agent-status" role="status">{settled ? "Jev trading complete. Orders settled." : agentNotice ?? "Orders chosen by Jev · Play money only."}</p> : null}
     <div className="clob-columns">{([{ label: "Bids", levels: bids, kind: "bid" }, { label: "Asks", levels: asks, kind: "ask" }] as const).map(side => <div className={`clob-side clob-${side.kind}`} key={side.kind}>
       <div className="clob-column-head"><strong>{side.label}</strong><span>Shares</span></div>
       {side.levels.length ? side.levels.map(level => <div className="clob-level" key={level.price}><i className="clob-volume" aria-hidden="true" style={{ width: `${100 * level.quantity / maxQuantity}%` }} /><span>{percent(level.price)}</span><span>{level.quantity.toLocaleString()}</span></div>) : <p className="clob-empty">{settled ? "—" : `No ${side.label.toLowerCase()}`}</p>}

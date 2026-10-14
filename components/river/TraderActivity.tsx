@@ -30,7 +30,7 @@ export function TraderActivity({ session }: { session: SessionView | null }) {
 
   return <section className="trader-activity" aria-label="Synthetic trader positions and executed trades">
     <div className="trader-activity-heading">
-      <div><h2>Trader positions</h2><p>{traders.length} simulated traders · {totalVolume.toLocaleString()} shares traded</p></div>
+      <div><h2>Trader positions</h2><p>{traders.length} {session.market.driver === "jev" ? "Jev traders" : "simulated traders"} · {totalVolume.toLocaleString()} shares traded</p></div>
     </div>
     <details className="trader-details">
       <summary>Trader details</summary>
