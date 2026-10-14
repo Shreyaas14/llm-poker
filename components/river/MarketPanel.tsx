@@ -50,6 +50,19 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
   const noQuote = outcomeClosed || orderType === "ioc" && actualPrice == null;
   const insufficient = side === "buy" ? total > (session?.market.availableCash ?? 0) : Number(quantity) > (position?.availableQuantity ?? 0);
 
+  function selectOutcome(outcome: number, tradeSide?: "buy" | "sell") {
+    setSelected(outcome);
+    onSelectOutcome?.(outcome);
+    setTicketError(null);
+    if (tradeSide && session) {
+      setSide(tradeSide);
+      const selectedBook = session.market.books.find(item => item.outcome === outcome);
+      setQuote({ id: session.id, hand: session.hand, outcome, side: tradeSide, price: (tradeSide === "buy" ? selectedBook?.bestAsk : selectedBook?.bestBid) ?? null });
+    } else {
+      setQuote(null);
+    }
+  }
+
   function holdQuote(refresh = false) {
     if (!session || !refresh && (quoteHeld || draftStale)) return;
     setQuote({ id: session.id, hand: session.hand, outcome: selected, side, price: selectedPrice ?? null });
@@ -79,10 +92,16 @@ export function MarketPanel({ session, bootstrap, busy, playing = false, onComma
         const buyShares = sharesAtQuote(rowBook, session.market.openOrders, "buy");
         const sellShares = sharesAtQuote(rowBook, session.market.openOrders, "sell");
         const detail = holding > 0 ? `You own ${holding}` : model.folded ? "Folded" : ended && payout > 0 ? "Winner" : null;
-        return <button type="button" key={model.seat} className={`market-row ${selected === model.seat ? "selected" : ""}`} aria-pressed={selected === model.seat} onClick={() => { setSelected(model.seat); onSelectOutcome?.(model.seat); setQuote(null); setTicketError(null); }}>
-          <span className="market-model"><ModelMark name={model.name} /><span className="market-model-label"><span className="market-model-name">{session.mode === "practice" ? model.name : model.modelId || model.name}</span><small className="market-row-detail">{detail ?? "\u00a0"}</small></span></span>
-          <span className="price-box" aria-label={ended ? `Payout ${dollars(payout)}` : `Buy at ${price(rowBook?.bestAsk)}, ${buyShares} shares available`}>{ended ? payout > 0 && payout < 1 ? `1/${session?.winners.length}` : price(payout) : price(rowBook?.bestAsk)}{!ended ? <small className="quote-quantity">{buyShares.toLocaleString("en-US")} sh</small> : null}</span><span className="price-box sell-price" aria-label={ended ? payout > 0 ? "Winner" : "Lost" : `Sell at ${price(rowBook?.bestBid)}, buyers for ${sellShares} shares`}>{ended ? payout > 0 ? "WIN" : "—" : price(rowBook?.bestBid)}{!ended ? <small className="quote-quantity">{sellShares.toLocaleString("en-US")} sh</small> : null}</span>
-        </button>;
+        return <div key={model.seat} className={`market-row ${selected === model.seat ? "selected" : ""}`}>
+          <button type="button" className="market-model" aria-label={`View ${model.name} market`} aria-pressed={selected === model.seat} onClick={() => selectOutcome(model.seat)}><ModelMark name={model.name} /><span className="market-model-label"><span className="market-model-name">{session.mode === "practice" ? model.name : model.modelId || model.name}</span><small className="market-row-detail">{detail ?? "\u00a0"}</small></span></button>
+          {ended || readOnly ? <>
+            <span className="price-box" aria-label={ended ? `Payout ${dollars(payout)}` : `Buy at ${price(rowBook?.bestAsk)}, ${buyShares} shares available`}>{ended ? payout > 0 && payout < 1 ? `1/${session.winners.length}` : price(payout) : price(rowBook?.bestAsk)}{!ended ? <small className="quote-quantity">{buyShares.toLocaleString("en-US")} sh</small> : null}</span>
+            <span className="price-box sell-price" aria-label={ended ? payout > 0 ? "Winner" : "Lost" : `Sell at ${price(rowBook?.bestBid)}, buyers for ${sellShares} shares`}>{ended ? payout > 0 ? "WIN" : "—" : price(rowBook?.bestBid)}{!ended ? <small className="quote-quantity">{sellShares.toLocaleString("en-US")} sh</small> : null}</span>
+          </> : <>
+            <button type="button" className="price-box quote-button" aria-label={`Buy ${model.name} at ${price(rowBook?.bestAsk)}, ${buyShares} shares available`} aria-pressed={selected === model.seat && side === "buy"} onClick={() => selectOutcome(model.seat, "buy")}>{price(rowBook?.bestAsk)}<small className="quote-quantity">{buyShares.toLocaleString("en-US")} sh</small></button>
+            <button type="button" className="price-box sell-price quote-button" aria-label={`Sell ${model.name} at ${price(rowBook?.bestBid)}, buyers for ${sellShares} shares`} aria-pressed={selected === model.seat && side === "sell"} onClick={() => selectOutcome(model.seat, "sell")}>{price(rowBook?.bestBid)}<small className="quote-quantity">{sellShares.toLocaleString("en-US")} sh</small></button>
+          </>}
+        </div>;
       })}</div></> : null}
       {!session ? <div className="intro-ticket"><p>5 hands · $1,000</p>
         <div className="mode-choices"><button type="button" className={`mode-choice ${mode === "practice" ? "active" : ""}`} aria-pressed={mode === "practice"} onClick={() => setMode("practice")}><strong>Practice</strong><small>Instant decisions</small></button><button type="button" className={`mode-choice ${mode === "live" ? "active" : ""}`} aria-pressed={mode === "live"} onClick={() => setMode("live")}><strong>Live models</strong><small>Four AI providers</small></button></div>

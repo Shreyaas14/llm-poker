@@ -94,7 +94,7 @@ svg { flex-shrink: 0; }
 .market-row { position: relative; width: 100%; text-align: left; min-height: 60px; padding: 10px 0; border-top: 1px solid var(--line); }
 .market-row:hover { background: #f0f0ec; }
 .market-row.selected .market-model-name { text-decoration: underline; text-underline-offset: 5px; text-decoration-thickness: 1px; }
-.market-model { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; font-weight: 500; }
+.market-model { padding: 0; min-height: 40px; text-align: left; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; font-weight: 500; }
 .market-model-label { min-width: 0; }
 .model-mark { width: 26px; height: 26px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; font-size: 22px; font-weight: 400; line-height: 1; background: #e4e5f1; color: #414b6a; }
 .model-claude { color: #ba7955; background: #f4eade; font-size: 26px; }
@@ -102,6 +102,8 @@ svg { flex-shrink: 0; }
 .model-grok { font-size: 23px; font-weight: 700; }
 .market-model-name { overflow-wrap: anywhere; }
 .market-model small, .market-row-detail { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 400; text-decoration: none; }
+.quote-button { min-height: 40px; padding: 0; }
+.quote-button:hover { text-decoration: underline; text-underline-offset: 3px; }
 .price-box { display: block; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 500; }
 .quote-key { margin: -4px 0 9px; color: var(--muted); font-size: 10px; text-align: right; }
 .quote-quantity { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 400; white-space: nowrap; }
