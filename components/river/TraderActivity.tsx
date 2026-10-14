@@ -5,9 +5,8 @@ import type { SessionView } from "../../app/types";
 import type { TraderKind } from "../../lib/market";
 import "./trader-activity.css";
 
-const KINDS: TraderKind[] = ["maker", "fundamental", "equity", "momentum", "contrarian", "noise", "arbitrage"];
+const KINDS: TraderKind[] = ["maker", "fundamental", "equity", "momentum", "contrarian", "noise"];
 const KIND_DESCRIPTIONS: Record<TraderKind, string> = {
-  arbitrage: "Buys underpriced complete sets or sells overpriced complete sets using funded collateral.",
   maker: "Quotes both sides and manages inventory.",
   fundamental: "Trades differences from its estimated outcome value.",
   equity: "Trades a softened estimate of outcome value.",
@@ -31,7 +30,7 @@ export function TraderActivity({ session }: { session: SessionView | null }) {
 
   return <section className="trader-activity" aria-label="Synthetic trader positions and executed trades">
     <div className="trader-activity-heading">
-      <div><h2>Trader positions</h2><p>{traders.filter(t=>t.kind!=="arbitrage").length} {session.market.driver === "jev" ? "Jev traders" : "simulated traders"}{traders.some(t=>t.kind==="arbitrage") ? " + complete-set arbitrage" : ""} · {totalVolume.toLocaleString()} shares traded</p></div>
+      <div><h2>Trader positions</h2><p>{traders.length} {session.market.driver === "jev" ? "Jev traders" : "simulated traders"} · {totalVolume.toLocaleString()} shares traded</p></div>
     </div>
     <details className="trader-details">
       <summary>Trader details</summary>
@@ -55,7 +54,7 @@ export function TraderActivity({ session }: { session: SessionView | null }) {
       </table>
     </div> : <p className="trader-empty">Trader positions are available after the next market update.</p>}
     {view === "net" && traders.some(trader => trader.netFilledShares === null) ? <p className="trader-view-note">Net trades were not retained for this earlier settled hand.</p> : null}
-    {view === "holdings" ? <details className="trader-method"><summary>Starting inventory</summary><p>New makers and the complete-set arbitrage agent start with 2,000 shares per outcome; other traders start with 240. Earlier games retain their original inventory. Orders are unfilled quotes.</p></details> : null}
+    {view === "holdings" ? <details className="trader-method"><summary>Starting inventory</summary><p>Makers start with 700 shares per outcome; other traders start with 240. Orders are unfilled quotes.</p></details> : null}
     </details>
     <div className="trader-tape-heading"><h3>Latest fills</h3><span>Buyer ← seller</span></div>
     {trades.length ? <ol className="trader-tape">{trades.slice(0, 6).map(trade => {
