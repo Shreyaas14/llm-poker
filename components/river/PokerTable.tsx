@@ -15,6 +15,11 @@ export const MODEL_SEATS: TableSeat[] = ["GPT", "Claude", "Gemini", "Grok"].map(
   active: false, dealer: false, winner: false, description: "Personalities can be enabled before starting a new challenge.",
 }));
 
+export function ModelMark({ name }: { name: string }) {
+  const lower = name.toLowerCase();
+  return <span aria-hidden="true" className={`model-mark model-${lower.includes("gpt") ? "gpt" : lower.includes("claude") ? "claude" : lower.includes("gemini") ? "gemini" : "grok"}`}>{lower.includes("claude") ? "✳" : lower.includes("gemini") ? "✦" : lower.includes("gpt") ? "◎" : "╱"}</span>;
+}
+
 function PlayerClass({ name, description }: { name?: string | null; description: string }) {
   const tooltipId = useId();
   const [open, setOpen] = useState(false);
