@@ -24,7 +24,7 @@ export function percent(value: number | null | undefined): string {
 export function equityDescription(odds: ShowdownOdds | undefined): string {
   const assumption = "Expected share of the main pot at showdown, assuming no further folds. Ties split the pot.";
   if (!odds) return assumption;
-  return `${assumption} ${odds.method === "exact" ? "Exact enumeration of all remaining boards." : `${odds.samples.toLocaleString()} sampled boards; maximum standard error ${(odds.standardError * 100).toFixed(1)} percentage points (one standard deviation).`}`;
+  return `${assumption} ${odds.method === "exact" ? "Exact card calculation or settled payout." : `${odds.samples.toLocaleString()} sampled boards; maximum standard error ${(odds.standardError * 100).toFixed(1)} percentage points (one standard deviation).`}`;
 }
 
 /** History is recorded from the book midpoint, or the last trade when a side is empty. */
